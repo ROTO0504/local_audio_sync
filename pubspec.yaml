@@ -1,0 +1,51 @@
+name: local_audio_sync
+description: Local network audio aggregation - broadcast mic audio from any device to a Windows hub.
+publish_to: 'none'
+version: 1.0.0+1
+
+environment:
+  sdk: ^3.11.3
+
+dependencies:
+  flutter:
+    sdk: flutter
+
+  # State management
+  flutter_riverpod: ^2.6.1
+
+  # Navigation
+  go_router: ^14.6.2
+
+  # Persistence
+  shared_preferences: ^2.3.3
+
+  # Microphone capture (Android, iOS, macOS, Windows)
+  record: ^6.2.0
+
+  # Opus codec encode/decode via FFI
+  opus_dart: ^3.0.1
+  opus_flutter: ^3.0.1
+
+  # Permission requests
+  permission_handler: ^11.3.1
+
+  # Local IP address resolution
+  network_info_plus: ^6.0.1
+
+  # Stable client IDs
+  uuid: ^4.5.1
+
+  # FFI utilities (calloc/malloc for native memory)
+  ffi: ^2.1.0
+
+  cupertino_icons: ^1.0.8
+
+dev_dependencies:
+  flutter_test:
+    sdk: flutter
+  flutter_lints: ^6.0.0
+  integration_test:
+    sdk: flutter
+
+flutter:
+  uses-material-design: true

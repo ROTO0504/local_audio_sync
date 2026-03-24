@@ -1,0 +1,11 @@
+{
+  "permissions": {
+    "allow": [
+      "Read(//c/Users/hirot-/AppData/Local/Pub/Cache/hosted/pub.dev/opus_dart-3.0.1/example/bin/**)",
+      "Read(//c/Users/hirot-/AppData/Local/Pub/Cache/hosted/pub.dev/opus_dart-3.0.1/example//**)",
+      "Read(//c/Users/hirot-/AppData/Local/Pub/Cache/hosted/pub.dev/**)",
+      "Read(//c/Users/hirot-/AppData/Local/Pub/Cache/hosted/pub.dev/opus_dart-3.0.1/**)",
+      "Bash(flutter test:*)"
+    ]
+  }
+}

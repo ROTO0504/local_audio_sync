@@ -1,0 +1,8 @@
+{
+  "permissions": {
+    "allow": [
+      "Read(//d/VSCode_pj/**)",
+      "Bash(flutter create:*)"
+    ]
+  }
+}
