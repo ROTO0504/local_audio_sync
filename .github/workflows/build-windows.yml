@@ -22,31 +22,12 @@ jobs:
       - name: Install dependencies
         run: flutter pub get
 
-      - name: Create opus_flutter_windows native stub
+      - name: Remove opus_flutter_windows from CMake plugin list
         shell: pwsh
         run: |
-          $pubCache = (dart pub cache path).Trim()
-          $opusDir = Get-ChildItem "$pubCache\hosted\pub.dev" -Filter "opus_flutter_windows-*" |
-                     Sort-Object Name -Descending | Select-Object -First 1
-          if ($opusDir) {
-            $stub = "$($opusDir.FullName)\windows"
-            $inc  = "$stub\include\opus_flutter_windows"
-            New-Item -ItemType Directory -Force -Path $inc | Out-Null
-            Set-Content "$stub\CMakeLists.txt" @'
-          cmake_minimum_required(VERSION 3.14)
-          project(opus_flutter_windows_windows LANGUAGES CXX)
-          set(PLUGIN_NAME "opus_flutter_windows_plugin")
-          file(WRITE "${CMAKE_CURRENT_BINARY_DIR}/_stub.cc"
-            "extern \"C\" void noneRegisterWithRegistrar(void*) {}\n")
-          add_library(${PLUGIN_NAME} STATIC "${CMAKE_CURRENT_BINARY_DIR}/_stub.cc")
-          target_include_directories(${PLUGIN_NAME} PUBLIC "${CMAKE_CURRENT_SOURCE_DIR}/include")
-          set_property(TARGET ${PLUGIN_NAME} PROPERTY CXX_STANDARD 17)
-          '@
-            Set-Content "$inc\none.h" 'extern "C" void noneRegisterWithRegistrar(void* registrar);'
-            Write-Host "Stub created at $stub"
-          } else {
-            Write-Host "opus_flutter_windows not found in pub cache, skipping"
-          }
+          $f = "windows\flutter\generated_plugins.cmake"
+          (Get-Content $f) | Where-Object { $_ -notmatch 'opus_flutter_windows' } | Set-Content $f
+          Write-Host "Patched $f"
 
       - name: Build Windows executable (release)
         run: flutter build windows --release
