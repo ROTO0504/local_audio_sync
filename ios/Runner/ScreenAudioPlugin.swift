@@ -19,6 +19,7 @@ import UIKit
 
     private var eventSink: FlutterEventSink?
     private let recorder = RPScreenRecorder.shared()
+    private var silentPlayer: AVAudioPlayer?
 
     // MARK: – Registration
 
@@ -81,6 +82,9 @@ import UIKit
             return
         }
 
+        // Start silent audio loop to keep the app alive in background
+        startKeepAlive()
+
         guard recorder.isAvailable else {
             result(FlutterError(code: "UNAVAILABLE",
                                message: "RPScreenRecorder is not available on this device",
@@ -106,6 +110,7 @@ import UIKit
     }
 
     private func stopCapture(result: @escaping FlutterResult) {
+        stopKeepAlive()
         recorder.stopCapture { error in
             if let error = error {
                 result(FlutterError(code: "STOP_FAILED",
@@ -115,6 +120,41 @@ import UIKit
                 result(nil)
             }
         }
+    }
+
+    // MARK: – Background keep-alive (silent audio loop)
+
+    /// Play an inaudible WAV on loop so iOS keeps the audio session active
+    /// even when RPScreenRecorder has no data (e.g. DRM-protected apps).
+    private func startKeepAlive() {
+        guard silentPlayer == nil else { return }
+        var wav = Data()
+        func u32(_ v: UInt32) { var x = v.littleEndian; wav.append(Data(bytes: &x, count: 4)) }
+        func u16(_ v: UInt16) { var x = v.littleEndian; wav.append(Data(bytes: &x, count: 2)) }
+        let dataSize: UInt32 = 88_200  // 1 s @ 44 100 Hz, mono, 16-bit
+        wav.append("RIFF".data(using: .ascii)!)
+        u32(36 + dataSize)
+        wav.append("WAVEfmt ".data(using: .ascii)!)
+        u32(16); u16(1); u16(1)          // chunk size, PCM, mono
+        u32(44_100); u32(88_200)          // sample rate, byte rate
+        u16(2); u16(16)                   // block align, bits/sample
+        wav.append("data".data(using: .ascii)!)
+        u32(dataSize)
+        wav.append(Data(count: Int(dataSize)))  // silence
+
+        do {
+            silentPlayer = try AVAudioPlayer(data: wav)
+            silentPlayer?.numberOfLoops = -1
+            silentPlayer?.volume = 0.01
+            silentPlayer?.play()
+        } catch {
+            print("[ScreenAudioPlugin] Keep-alive failed: \(error)")
+        }
+    }
+
+    private func stopKeepAlive() {
+        silentPlayer?.stop()
+        silentPlayer = nil
     }
 
     // MARK: – PCM conversion
