@@ -1,29 +1,30 @@
 import AVFoundation
+import CoreMedia
 import Flutter
 import ReplayKit
 import UIKit
 
-/// Captures system audio (all apps) via RPScreenRecorder and streams raw
-/// PCM-16 bytes back to Flutter through an EventChannel.
+/// Captures system audio (all apps on the device) via RPScreenRecorder and
+/// streams interleaved PCM-16LE stereo @ 48 000 Hz back to Flutter through
+/// an EventChannel.
 ///
-/// MethodChannel  : "com.example.local_audio_sync/broadcast"
-///   startScreenCapture  → starts RPScreenRecorder, returns nil on success
+/// MethodChannel  "com.example.local_audio_sync/broadcast"
+///   startScreenCapture  → starts recording; returns nil on success
 ///   stopScreenCapture   → stops recording
 ///
-/// EventChannel   : "com.example.local_audio_sync/screenAudio"
-///   Delivers FlutterStandardTypedData(bytes:) packets of interleaved
-///   PCM-16LE stereo at 48 000 Hz.  Each packet may be any size; the Dart
-///   side buffers them into 3 840-byte (20 ms) chunks.
+/// EventChannel   "com.example.local_audio_sync/screenAudio"
+///   Delivers FlutterStandardTypedData(bytes:) packets.
+///   Packets are arbitrarily sized; the Dart side buffers them into
+///   3 840-byte (20 ms @ 48 kHz stereo PCM16) chunks.
 @objc class ScreenAudioPlugin: NSObject, FlutterPlugin, FlutterStreamHandler {
 
     private var eventSink: FlutterEventSink?
     private let recorder = RPScreenRecorder.shared()
 
-    // AVAudioConverter for Float32 → Int16 and optional resampling
     private var converter: AVAudioConverter?
     private var outputFormat: AVAudioFormat?
 
-    // MARK: – FlutterPlugin registration
+    // MARK: – Registration
 
     @objc static func register(with registrar: FlutterPluginRegistrar) {
         let methodChannel = FlutterMethodChannel(
@@ -39,7 +40,7 @@ import UIKit
         eventChannel.setStreamHandler(instance)
     }
 
-    // MARK: – FlutterPlugin method handler
+    // MARK: – FlutterPlugin
 
     func handle(_ call: FlutterMethodCall, result: @escaping FlutterResult) {
         switch call.method {
@@ -48,7 +49,6 @@ import UIKit
         case "stopScreenCapture":
             stopCapture(result: result)
         default:
-            // Let other handlers (e.g. Android broadcast service stubs) fall through
             result(FlutterMethodNotImplemented)
         }
     }
@@ -94,7 +94,9 @@ import UIKit
     }
 
     private func stopCapture(result: @escaping FlutterResult) {
-        recorder.stopCapture { error in
+        recorder.stopCapture { [weak self] error in
+            self?.converter = nil
+            self?.outputFormat = nil
             if let error = error {
                 result(FlutterError(code: "STOP_FAILED",
                                    message: error.localizedDescription,
@@ -103,109 +105,101 @@ import UIKit
                 result(nil)
             }
         }
-        converter = nil
-        outputFormat = nil
     }
 
-    // MARK: – PCM conversion
+    // MARK: – Audio processing
 
     private func processSampleBuffer(_ sampleBuffer: CMSampleBuffer) {
         guard let sink = eventSink else { return }
 
-        // Lazily build the converter on the first buffer so we know the
-        // source format (sample rate, channel count, etc.) from the hardware.
+        // Build the converter lazily on the first buffer so we know the
+        // source format from the actual hardware output.
         if converter == nil {
-            setupConverter(for: sampleBuffer)
+            guard let desc = CMSampleBufferGetFormatDescription(sampleBuffer),
+                  let srcFmt = AVAudioFormat(cmAudioFormatDescription: desc),
+                  let dstFmt = AVAudioFormat(
+                      standardFormatWithSampleRate: 48_000, channels: 2),
+                  let conv = AVAudioConverter(from: srcFmt, to: dstFmt) else { return }
+            converter = conv
+            outputFormat = dstFmt
         }
 
-        guard let conv = converter,
-              let outFmt = outputFormat else { return }
+        guard let conv = converter, let outFmt = outputFormat else { return }
 
-        // Wrap the CMSampleBuffer in an AVAudioPCMBuffer for the converter.
-        guard let inputBlock = CMSampleBufferGetDataBuffer(sampleBuffer) else { return }
-        let frameCount = CMSampleBufferGetNumSamples(sampleBuffer)
+        let frameCount = AVAudioFrameCount(CMSampleBufferGetNumSamples(sampleBuffer))
         guard frameCount > 0 else { return }
 
-        guard let inputFmt = conv.inputFormat as AVAudioFormat?,
-              let inputBuf = AVAudioPCMBuffer(
-                pcmFormat: inputFmt,
-                frameCapacity: AVAudioFrameCount(frameCount)) else { return }
-        inputBuf.frameLength = AVAudioFrameCount(frameCount)
+        // Wrap CMSampleBuffer audio data in an AVAudioPCMBuffer
+        guard let inputBuf = makePCMBuffer(from: sampleBuffer,
+                                           format: conv.inputFormat) else { return }
 
-        // Copy raw bytes from CMBlockBuffer into the AVAudioPCMBuffer.
-        var dataPointer: UnsafeMutablePointer<Int8>?
-        var totalLength = 0
-        CMBlockBufferGetDataPointer(inputBlock,
-                                   atOffset: 0,
-                                   lengthAtOffsetOut: nil,
-                                   totalLengthOut: &totalLength,
-                                   dataPointerOut: &dataPointer)
-        guard let src = dataPointer else { return }
-
-        if let channelData = inputBuf.floatChannelData {
-            let bytesPerChannel = totalLength / Int(inputFmt.channelCount)
-            for ch in 0 ..< Int(inputFmt.channelCount) {
-                memcpy(channelData[ch], src.advanced(by: ch * bytesPerChannel),
-                       bytesPerChannel)
-            }
-        } else if let int16Data = inputBuf.int16ChannelData {
-            let bytesPerChannel = totalLength / Int(inputFmt.channelCount)
-            for ch in 0 ..< Int(inputFmt.channelCount) {
-                memcpy(int16Data[ch], src.advanced(by: ch * bytesPerChannel),
-                       bytesPerChannel)
-            }
-        }
-
-        // Allocate output buffer (ratio of sample rates + some headroom).
-        let ratio = outFmt.sampleRate / inputFmt.sampleRate
-        let outFrames = AVAudioFrameCount(Double(frameCount) * ratio + 1)
+        // Allocate output buffer with headroom for SRC ratio
+        let ratio = outFmt.sampleRate / conv.inputFormat.sampleRate
+        let outCapacity = AVAudioFrameCount(Double(frameCount) * ratio + 64)
         guard let outputBuf = AVAudioPCMBuffer(pcmFormat: outFmt,
-                                               frameCapacity: outFrames) else { return }
+                                               frameCapacity: outCapacity) else { return }
 
-        var error: NSError?
-        conv.convert(to: outputBuf, error: &error) { _, outStatus in
+        // Provide input exactly once; return .noDataNow on subsequent calls
+        var inputConsumed = false
+        var convertError: NSError?
+        conv.convert(to: outputBuf, error: &convertError) { _, outStatus in
+            if inputConsumed {
+                outStatus.pointee = .noDataNow
+                return nil
+            }
+            inputConsumed = true
             outStatus.pointee = .haveData
             return inputBuf
         }
 
-        guard error == nil, outputBuf.frameLength > 0 else { return }
+        guard convertError == nil, outputBuf.frameLength > 0 else { return }
 
-        // outputBuf contains non-interleaved Float32.  Convert to interleaved Int16.
-        let outFrameLen = Int(outputBuf.frameLength)
-        let channels = Int(outFmt.channelCount)
-        var int16Bytes = Data(count: outFrameLen * channels * 2)
+        // Convert non-interleaved Float32 → interleaved Int16
+        let pcm16 = toInterleavedInt16(outputBuf)
+        guard !pcm16.isEmpty else { return }
 
-        int16Bytes.withUnsafeMutableBytes { rawPtr in
-            let ptr = rawPtr.bindMemory(to: Int16.self)
-            for frame in 0 ..< outFrameLen {
-                for ch in 0 ..< channels {
-                    let sample = outputBuf.floatChannelData![ch][frame]
-                    let clamped = max(-1.0, min(1.0, sample))
-                    ptr[frame * channels + ch] = Int16(clamped * 32_767)
-                }
-            }
-        }
-
-        let typedData = FlutterStandardTypedData(bytes: int16Bytes)
+        let typedData = FlutterStandardTypedData(bytes: pcm16)
         DispatchQueue.main.async {
             sink(typedData)
         }
     }
 
-    /// Build an AVAudioConverter from the source format (as reported by the
-    /// first RPScreenRecorder sample) to 48 000 Hz / stereo / Float32.
-    private func setupConverter(for sampleBuffer: CMSampleBuffer) {
-        guard let desc = CMSampleBufferGetFormatDescription(sampleBuffer),
-              let srcFmt = AVAudioFormat(cmAudioFormatDescription: desc) else { return }
+    /// Extract audio bytes from a CMSampleBuffer into a new AVAudioPCMBuffer
+    /// using the safe CoreMedia API.
+    private func makePCMBuffer(from sampleBuffer: CMSampleBuffer,
+                               format: AVAudioFormat) -> AVAudioPCMBuffer? {
+        let frameCount = AVAudioFrameCount(CMSampleBufferGetNumSamples(sampleBuffer))
+        guard frameCount > 0,
+              let buf = AVAudioPCMBuffer(pcmFormat: format,
+                                         frameCapacity: frameCount) else { return nil }
+        buf.frameLength = frameCount
 
-        // Target: 48 000 Hz, stereo, non-interleaved Float32
-        guard let dstFmt = AVAudioFormat(
-            standardFormatWithSampleRate: 48_000,
-            channels: 2) else { return }
+        // Copy PCM data from the CMSampleBuffer into the AudioBufferList of buf
+        let status = CMSampleBufferCopyPCMDataIntoAudioBufferList(
+            sampleBuffer,
+            at: 0,
+            frameCount: Int32(frameCount),
+            into: buf.mutableAudioBufferList
+        )
+        guard status == noErr else { return nil }
+        return buf
+    }
 
-        outputFormat = dstFmt
-
-        guard let conv = AVAudioConverter(from: srcFmt, to: dstFmt) else { return }
-        converter = conv
+    /// Convert a non-interleaved Float32 AVAudioPCMBuffer to interleaved Int16 Data.
+    private func toInterleavedInt16(_ buf: AVAudioPCMBuffer) -> Data {
+        let frames = Int(buf.frameLength)
+        let channels = Int(buf.format.channelCount)
+        var out = Data(count: frames * channels * 2)
+        out.withUnsafeMutableBytes { rawPtr in
+            let dst = rawPtr.bindMemory(to: Int16.self)
+            for f in 0 ..< frames {
+                for ch in 0 ..< channels {
+                    let sample = buf.floatChannelData![ch][f]
+                    let clamped = max(-1.0, min(1.0, sample))
+                    dst[f * channels + ch] = Int16(clamped * 32_767)
+                }
+            }
+        }
+        return out
     }
 }
