@@ -9,11 +9,14 @@ import '../providers/client_state_provider.dart';
 import '../services/audio_capture_service.dart';
 import '../services/discovery_service.dart';
 import '../services/opus_encoder_service.dart';
+import '../services/screen_audio_capture_service.dart';
 import '../services/udp_sender_service.dart';
 import '../widgets/connection_status_badge.dart';
 import '../widgets/vu_meter.dart';
 
 const _broadcastChannel = MethodChannel('com.example.local_audio_sync/broadcast');
+
+enum _AudioSource { microphone, screenAudio }
 
 class ClientScreen extends ConsumerStatefulWidget {
   const ClientScreen({super.key});
@@ -25,6 +28,7 @@ class ClientScreen extends ConsumerStatefulWidget {
 class _ClientScreenState extends ConsumerState<ClientScreen> {
   final ClientDiscoveryListener _discovery = ClientDiscoveryListener();
   final AudioCaptureService _capture = AudioCaptureService();
+  final ScreenAudioCaptureService _screenCapture = ScreenAudioCaptureService();
   final OpusEncoderService _encoder = OpusEncoderService();
   final UdpSenderService _sender = UdpSenderService();
   final _uuid = const Uuid().v4();
@@ -32,6 +36,7 @@ class _ClientScreenState extends ConsumerState<ClientScreen> {
   StreamSubscription? _discoverySub;
   StreamSubscription? _captureSub;
   bool _connectingToHub = false;
+  _AudioSource _audioSource = _AudioSource.microphone;
 
   @override
   void initState() {
@@ -67,6 +72,15 @@ class _ClientScreenState extends ConsumerState<ClientScreen> {
   }
 
   Future<void> _startBroadcast() async {
+    if (_audioSource == _AudioSource.screenAudio &&
+        (Platform.isAndroid || Platform.isIOS)) {
+      await _startScreenAudioBroadcast();
+    } else {
+      await _startMicBroadcast();
+    }
+  }
+
+  Future<void> _startMicBroadcast() async {
     final hasPermission = await _capture.requestPermission();
     if (!hasPermission) {
       if (mounted) {
@@ -83,11 +97,33 @@ class _ClientScreenState extends ConsumerState<ClientScreen> {
 
     await _capture.start();
     _captureSub = _capture.pcmStream.listen((pcmBytes) {
-      // Update VU level
       final level = AudioCaptureService.computeRmsLevel(pcmBytes);
       ref.read(clientStateProvider.notifier).updateVuLevel(level);
+      final opus = _encoder.encode(pcmBytes);
+      if (opus != null) _sender.sendAudio(opus);
+    });
+  }
 
-      // Encode and send
+  Future<void> _startScreenAudioBroadcast() async {
+    // Android needs an explicit MediaProjection permission dialog first.
+    if (Platform.isAndroid) {
+      final granted = await _screenCapture.requestPermission();
+      if (!granted) {
+        if (mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            const SnackBar(content: Text('Screen audio permission denied')),
+          );
+        }
+        _connectingToHub = false;
+        ref.read(clientStateProvider.notifier).setDisconnected();
+        return;
+      }
+    }
+
+    await _screenCapture.start();
+    _captureSub = _screenCapture.pcmStream.listen((pcmBytes) {
+      final level = AudioCaptureService.computeRmsLevel(pcmBytes);
+      ref.read(clientStateProvider.notifier).updateVuLevel(level);
       final opus = _encoder.encode(pcmBytes);
       if (opus != null) _sender.sendAudio(opus);
     });
@@ -100,6 +136,7 @@ class _ClientScreenState extends ConsumerState<ClientScreen> {
     await _captureSub?.cancel();
     _captureSub = null;
     await _capture.stop();
+    await _screenCapture.stop();
     _sender.disconnect();
     _connectingToHub = false;
     ref.read(clientStateProvider.notifier).setDisconnected();
@@ -112,6 +149,7 @@ class _ClientScreenState extends ConsumerState<ClientScreen> {
     _discovery.stop();
     _encoder.dispose();
     _capture.dispose();
+    _screenCapture.dispose();
     super.dispose();
   }
 
@@ -120,6 +158,7 @@ class _ClientScreenState extends ConsumerState<ClientScreen> {
     final state = ref.watch(clientStateProvider);
     final name = ref.watch(deviceNameProvider);
     final isConnected = state.status == ClientConnectionStatus.connected;
+    final canSwitchSource = !isConnected && (Platform.isAndroid || Platform.isIOS);
 
     return Scaffold(
       appBar: AppBar(
@@ -141,6 +180,29 @@ class _ClientScreenState extends ConsumerState<ClientScreen> {
           child: Column(
             mainAxisSize: MainAxisSize.min,
             children: [
+              // Audio source toggle (iOS / Android only, disabled while connected)
+              if (Platform.isAndroid || Platform.isIOS) ...[
+                SegmentedButton<_AudioSource>(
+                  segments: const [
+                    ButtonSegment(
+                      value: _AudioSource.microphone,
+                      icon: Icon(Icons.mic),
+                      label: Text('マイク'),
+                    ),
+                    ButtonSegment(
+                      value: _AudioSource.screenAudio,
+                      icon: Icon(Icons.screen_share),
+                      label: Text('画面の音'),
+                    ),
+                  ],
+                  selected: {_audioSource},
+                  onSelectionChanged: canSwitchSource
+                      ? (set) => setState(() => _audioSource = set.first)
+                      : null,
+                ),
+                const SizedBox(height: 24),
+              ],
+
               // VU Meter
               AnimatedContainer(
                 duration: const Duration(milliseconds: 100),

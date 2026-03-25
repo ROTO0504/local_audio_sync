@@ -46,6 +46,8 @@ class AudioMixerService {
   }
 
   void addClient(int clientId) {
+    // Dispose any existing decoder before overwriting (handles reconnect without BYE)
+    _decoders[clientId]?.dispose();
     _jitterBuffers[clientId] = JitterBuffer();
     final dec = OpusDecoderService()..init();
     _decoders[clientId] = dec;
@@ -59,6 +61,14 @@ class AudioMixerService {
     _decoders[clientId]?.dispose();
     _decoders.remove(clientId);
     if (_initialized) _mixerRemoveClient(clientId);
+  }
+
+  /// Remove all clients and release their native resources.
+  /// Call this on Hub teardown before destroyFfi().
+  void removeAllClients() {
+    for (final id in _decoders.keys.toList()) {
+      removeClient(id);
+    }
   }
 
   void pushEncodedPacket(int clientId, int sequence, Uint8List opusBytes) {

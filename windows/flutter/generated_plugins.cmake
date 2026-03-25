@@ -3,6 +3,7 @@
 #
 
 list(APPEND FLUTTER_PLUGIN_LIST
+  opus_flutter_windows
   permission_handler_windows
   record_windows
 )

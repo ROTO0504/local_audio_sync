@@ -12,5 +12,9 @@ import UIKit
 
   func didInitializeImplicitFlutterEngine(_ engineBridge: FlutterImplicitEngineBridge) {
     GeneratedPluginRegistrant.register(with: engineBridge.pluginRegistry)
+    // Register native screen-audio plugin (RPScreenRecorder + EventChannel)
+    ScreenAudioPlugin.register(
+      with: engineBridge.pluginRegistry.registrar(forPlugin: "ScreenAudioPlugin")!
+    )
   }
 }

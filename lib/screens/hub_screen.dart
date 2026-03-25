@@ -49,6 +49,12 @@ class _HubScreenState extends ConsumerState<HubScreen> {
         lastSeen: DateTime.now(),
       );
       ref.read(hubStateProvider.notifier).addOrUpdateClient(client);
+
+      // If the client is reconnecting (same UUID, no BYE was sent), remove stale
+      // mixer state first so addClient starts with a clean decoder/jitter buffer.
+      if (existing != null) {
+        _mixer.removeClient(id);
+      }
       _mixer.addClient(id);
     };
 
@@ -96,6 +102,7 @@ class _HubScreenState extends ConsumerState<HubScreen> {
 
     // Mark stale clients every 10s
     _staleTimer = Timer.periodic(const Duration(seconds: 10), (_) {
+      if (!mounted) return; // widget may have been disposed between ticks
       final clients = ref.read(hubStateProvider);
       final now = DateTime.now();
       for (final entry in clients.entries) {
@@ -108,9 +115,17 @@ class _HubScreenState extends ConsumerState<HubScreen> {
 
   @override
   void dispose() {
+    // Null out callbacks first so any in-flight UDP events cannot touch
+    // the already-disposed Riverpod state or mixer after this point.
+    _receiver.onClientHello = null;
+    _receiver.onClientPing = null;
+    _receiver.onClientBye = null;
+    _receiver.onAudioPacket = null;
+
     _staleTimer?.cancel();
     _beacon.stop();
     _receiver.stop();
+    _mixer.removeAllClients(); // release all native Opus decoders
     AudioMixerService.destroyFfi();
     super.dispose();
   }

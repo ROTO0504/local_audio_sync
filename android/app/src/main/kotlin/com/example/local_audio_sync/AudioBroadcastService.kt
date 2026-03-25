@@ -32,11 +32,14 @@ class AudioBroadcastService : Service() {
         val notification = buildNotification()
 
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
-            startForeground(
-                NOTIFICATION_ID,
-                notification,
+            // API 34+ requires MEDIA_PROJECTION type when capturing screen audio
+            val fgType = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.UPSIDE_DOWN_CAKE) {
+                ServiceInfo.FOREGROUND_SERVICE_TYPE_MICROPHONE or
+                    ServiceInfo.FOREGROUND_SERVICE_TYPE_MEDIA_PROJECTION
+            } else {
                 ServiceInfo.FOREGROUND_SERVICE_TYPE_MICROPHONE
-            )
+            }
+            startForeground(NOTIFICATION_ID, notification, fgType)
         } else {
             startForeground(NOTIFICATION_ID, notification)
         }
