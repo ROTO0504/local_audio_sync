@@ -37,6 +37,8 @@ class _ClientScreenState extends ConsumerState<ClientScreen> {
   StreamSubscription? _captureSub;
   bool _connectingToHub = false;
   _AudioSource _audioSource = _AudioSource.microphone;
+  int _debugPacketCount = 0;
+  String? _captureError;
 
   @override
   void initState() {
@@ -120,8 +122,16 @@ class _ClientScreenState extends ConsumerState<ClientScreen> {
       }
     }
 
-    await _screenCapture.start();
+    try {
+      await _screenCapture.start();
+      setState(() => _captureError = null);
+    } catch (e) {
+      setState(() => _captureError = e.toString());
+      return;
+    }
+
     _captureSub = _screenCapture.pcmStream.listen((pcmBytes) {
+      setState(() => _debugPacketCount++);
       final level = AudioCaptureService.computeRmsLevel(pcmBytes);
       ref.read(clientStateProvider.notifier).updateVuLevel(level);
       final opus = _encoder.encode(pcmBytes);
@@ -223,6 +233,23 @@ class _ClientScreenState extends ConsumerState<ClientScreen> {
                   'Hub: ${state.hubIp}',
                   style: const TextStyle(fontSize: 13, color: Colors.grey),
                 ),
+              const SizedBox(height: 8),
+
+              // Debug info
+              if (isConnected && _audioSource == _AudioSource.screenAudio) ...[
+                Text(
+                  'Packets: $_debugPacketCount',
+                  style: TextStyle(
+                    fontSize: 12,
+                    color: _debugPacketCount > 0 ? Colors.green : Colors.orange,
+                  ),
+                ),
+                if (_captureError != null)
+                  Text(
+                    'Error: $_captureError',
+                    style: const TextStyle(fontSize: 12, color: Colors.red),
+                  ),
+              ],
               const SizedBox(height: 32),
 
               // Start / Stop button
