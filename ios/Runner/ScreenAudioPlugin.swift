@@ -115,11 +115,13 @@ import UIKit
         // Build the converter lazily on the first buffer so we know the
         // source format from the actual hardware output.
         if converter == nil {
+            // AVAudioFormat(cmAudioFormatDescription:) is failable → guard let
+            // AVAudioFormat(standardFormatWithSampleRate:channels:) is NOT failable → let
+            // AVAudioConverter(from:to:) is failable → guard let
             guard let desc = CMSampleBufferGetFormatDescription(sampleBuffer),
-                  let srcFmt = AVAudioFormat(cmAudioFormatDescription: desc),
-                  let dstFmt = AVAudioFormat(
-                      standardFormatWithSampleRate: 48_000, channels: 2),
-                  let conv = AVAudioConverter(from: srcFmt, to: dstFmt) else { return }
+                  let srcFmt = AVAudioFormat(cmAudioFormatDescription: desc) else { return }
+            let dstFmt = AVAudioFormat(standardFormatWithSampleRate: 48_000, channels: 2)
+            guard let conv = AVAudioConverter(from: srcFmt, to: dstFmt) else { return }
             converter = conv
             outputFormat = dstFmt
         }

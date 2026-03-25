@@ -64,19 +64,37 @@ add_subdirectory("audio_mixer_plugin")
 target_link_libraries(${BINARY_NAME} PRIVATE audio_mixer_plugin)
 
 
-# opus_flutter_windows is Dart-only but Flutter's CMake generator calls
-# add_subdirectory on its windows/ path. Create a minimal stub at CMake
-# configure time (after Flutter regenerates generated_plugins.cmake).
+# opus_flutter_windows is Dart-only on Windows. Flutter's CMake generator still
+# calls add_subdirectory on its windows/ path and generated_plugin_registrant.cc
+# does  #include <opus_flutter_windows/none.h>.
+# We create a minimal stub that satisfies both the CMake subdirectory requirement
+# and the header include.
 set(_OPUS_WIN
   "${CMAKE_CURRENT_SOURCE_DIR}/flutter/ephemeral/.plugin_symlinks/opus_flutter_windows")
-if(EXISTS "${_OPUS_WIN}" AND NOT EXISTS "${_OPUS_WIN}/windows")
-  file(MAKE_DIRECTORY "${_OPUS_WIN}/windows")
+if(EXISTS "${_OPUS_WIN}" AND NOT EXISTS "${_OPUS_WIN}/windows/CMakeLists.txt")
+  # Header: provides the declaration that generated_plugin_registrant.cc includes
+  file(MAKE_DIRECTORY "${_OPUS_WIN}/windows/include/opus_flutter_windows")
+  file(WRITE "${_OPUS_WIN}/windows/include/opus_flutter_windows/none.h"
+    "#pragma once\n"
+    "#ifdef __cplusplus\nextern \"C\" {\n#endif\n"
+    "void noneRegisterWithRegistrar(void* registrar);\n"
+    "#ifdef __cplusplus\n}\n#endif\n")
+  # Source: provides the empty implementation
   file(WRITE "${_OPUS_WIN}/windows/stub.cc"
     "extern \"C\" void noneRegisterWithRegistrar(void*) {}\n")
+  # CMakeLists: builds the static stub library and exports the include directory
+  # so that targets linking against it get the header search path automatically.
   file(WRITE "${_OPUS_WIN}/windows/CMakeLists.txt"
     "cmake_minimum_required(VERSION 3.14)\n"
     "project(opus_flutter_windows_windows LANGUAGES CXX)\n"
-    "add_library(opus_flutter_windows_plugin STATIC stub.cc)\n")
+    "add_library(opus_flutter_windows_plugin STATIC stub.cc)\n"
+    "target_include_directories(opus_flutter_windows_plugin PUBLIC include)\n")
+endif()
+# Always add the stub include directory globally so that
+# generated_plugin_registrant.cc can find <opus_flutter_windows/none.h>
+# regardless of whether CMake's PRIVATE link propagation is available.
+if(EXISTS "${_OPUS_WIN}/windows/include")
+  include_directories("${_OPUS_WIN}/windows/include")
 endif()
 
 # Generated plugin build rules, which manage building the plugins and adding
