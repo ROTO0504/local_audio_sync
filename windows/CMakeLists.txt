@@ -64,6 +64,21 @@ add_subdirectory("audio_mixer_plugin")
 target_link_libraries(${BINARY_NAME} PRIVATE audio_mixer_plugin)
 
 
+# opus_flutter_windows is Dart-only but Flutter's CMake generator calls
+# add_subdirectory on its windows/ path. Create a minimal stub at CMake
+# configure time (after Flutter regenerates generated_plugins.cmake).
+set(_OPUS_WIN
+  "${CMAKE_CURRENT_SOURCE_DIR}/flutter/ephemeral/.plugin_symlinks/opus_flutter_windows")
+if(EXISTS "${_OPUS_WIN}" AND NOT EXISTS "${_OPUS_WIN}/windows")
+  file(MAKE_DIRECTORY "${_OPUS_WIN}/windows")
+  file(WRITE "${_OPUS_WIN}/windows/stub.cc"
+    "extern \"C\" void noneRegisterWithRegistrar(void*) {}\n")
+  file(WRITE "${_OPUS_WIN}/windows/CMakeLists.txt"
+    "cmake_minimum_required(VERSION 3.14)\n"
+    "project(opus_flutter_windows_windows LANGUAGES CXX)\n"
+    "add_library(opus_flutter_windows_plugin STATIC stub.cc)\n")
+endif()
+
 # Generated plugin build rules, which manage building the plugins and adding
 # them to the application.
 include(flutter/generated_plugins.cmake)
