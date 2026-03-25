@@ -65,6 +65,22 @@ import UIKit
     // MARK: – Capture control
 
     private func startCapture(result: @escaping FlutterResult) {
+        // Re-activate audio session right before capture to guarantee background execution
+        let session = AVAudioSession.sharedInstance()
+        do {
+            try session.setCategory(
+                .playAndRecord,
+                mode: .default,
+                options: [.mixWithOthers, .defaultToSpeaker, .allowBluetooth]
+            )
+            try session.setActive(true)
+        } catch {
+            result(FlutterError(code: "AUDIO_SESSION",
+                               message: "Failed to activate audio session: \(error.localizedDescription)",
+                               details: nil))
+            return
+        }
+
         guard recorder.isAvailable else {
             result(FlutterError(code: "UNAVAILABLE",
                                message: "RPScreenRecorder is not available on this device",

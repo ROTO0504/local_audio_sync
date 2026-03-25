@@ -2,7 +2,9 @@
   "permissions": {
     "allow": [
       "Read(//d/VSCode_pj/**)",
-      "Bash(flutter create:*)"
+      "Bash(flutter create:*)",
+      "Bash(powershell -NoProfile -Command \"Test-Path ''C:\\\\flutter\\\\flutter\\\\bin\\\\cache\\\\flutter_tools.snapshot''; Get-Item ''C:\\\\flutter\\\\flutter\\\\bin\\\\cache\\\\flutter_tools.snapshot'' -ErrorAction SilentlyContinue | Select-Object Length,LastWriteTime\")",
+      "Bash(powershell -NoProfile -Command \"Get-ChildItem ''C:\\\\flutter\\\\flutter\\\\bin\\\\cache'' -Filter ''*.lock'' -ErrorAction SilentlyContinue; Get-ChildItem ''C:\\\\flutter\\\\flutter\\\\bin'' -Filter ''*.lock'' -ErrorAction SilentlyContinue; Test-Path ''C:\\\\flutter\\\\flutter\\\\bin\\\\cache\\\\lockfile''\")"
     ]
   }
 }
