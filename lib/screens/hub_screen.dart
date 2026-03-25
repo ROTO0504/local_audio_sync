@@ -100,7 +100,7 @@ class _HubScreenState extends ConsumerState<HubScreen> {
     await _receiver.start();
     await _beacon.start(name);
 
-    // Mark stale clients every 10s
+    // Mark stale clients every 10s and release their mixer resources.
     _staleTimer = Timer.periodic(const Duration(seconds: 10), (_) {
       if (!mounted) return; // widget may have been disposed between ticks
       final clients = ref.read(hubStateProvider);
@@ -108,6 +108,15 @@ class _HubScreenState extends ConsumerState<HubScreen> {
       for (final entry in clients.entries) {
         if (now.difference(entry.value.lastSeen).inSeconds > 10) {
           ref.read(hubStateProvider.notifier).markInactive(entry.key);
+          // Also clean up the native mixer slot so the audio callback stops
+          // iterating over the dead client's ring buffer and native Opus
+          // decoder resources are freed promptly.
+          final clientId = _uuidToClientId[entry.key];
+          if (clientId != null) {
+            _mixer.removeClient(clientId);
+            // Keep the UUID mapping so that a reconnecting client reuses the
+            // same numeric ID; addClient will reinitialise its state cleanly.
+          }
         }
       }
     });

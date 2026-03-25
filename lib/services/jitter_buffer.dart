@@ -10,6 +10,11 @@ class JitterBuffer {
 
   final SplayTreeMap<int, Uint8List> _buffer = SplayTreeMap();
   int? _nextExpectedSeq;
+  // True once we have committed to playing back (enough frames have buffered).
+  // Before this flag is set, hasData returns false when the buffer is below
+  // targetDelayFrames so that _drainJitterBuffer exits the while-loop instead
+  // of spinning forever on a pop() call that returns null without consuming.
+  bool _playbackStarted = false;
   int _totalReceived = 0;
   int _totalDropped = 0;
 
@@ -48,19 +53,29 @@ class JitterBuffer {
   Uint8List? pop() {
     if (_nextExpectedSeq == null) return null;
 
-    // Not enough buffered yet
-    if (_buffer.length < targetDelayFrames && _nextExpectedSeq == _buffer.firstKey()) {
-      return null;
-    }
+    // During the initial buffering phase wait until we have enough frames so
+    // that _drainJitterBuffer's while(hasData) loop cannot spin forever.
+    if (!_playbackStarted && _buffer.length < targetDelayFrames) return null;
 
     final seq = _nextExpectedSeq!;
     _nextExpectedSeq = _wrappedIncrement(seq);
+    // Once we commit to advancing the sequence we are in playback mode,
+    // regardless of whether this frame was a real packet or a PLC slot.
+    _playbackStarted = true;
 
     final frame = _buffer.remove(seq);
     return frame; // null = lost packet → caller should use PLC
   }
 
-  bool get hasData => _buffer.isNotEmpty;
+  /// True when there is data worth draining right now.
+  /// Before playback starts we require at least [targetDelayFrames] packets so
+  /// that pop() never returns null-without-consuming (which would infinite-loop
+  /// _drainJitterBuffer on Windows when FFI is active).
+  bool get hasData {
+    if (_nextExpectedSeq == null) return false;
+    if (!_playbackStarted) return _buffer.length >= targetDelayFrames;
+    return _buffer.isNotEmpty;
+  }
   int get bufferedCount => _buffer.length;
   int get totalReceived => _totalReceived;
   int get totalDropped => _totalDropped;
@@ -68,6 +83,7 @@ class JitterBuffer {
   void reset() {
     _buffer.clear();
     _nextExpectedSeq = null;
+    _playbackStarted = false;
     _totalReceived = 0;
     _totalDropped = 0;
   }
