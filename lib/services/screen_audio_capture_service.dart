@@ -3,6 +3,7 @@ import 'dart:io';
 import 'package:flutter/foundation.dart';
 import 'package:flutter/services.dart';
 import 'pcm_chunker.dart';
+import 'windows_loopback_service.dart';
 
 /// 内部音声(他アプリの再生音)をキャプチャしてくれる各 OS のネイティブ実装の
 /// 共通ファサード。すべて同じ PCM16 ステレオ 48kHz / 20ms チャンクで吐く。
@@ -20,9 +21,11 @@ import 'pcm_chunker.dart';
 ///     `allowAudioPlaybackCapture` 許可しているもののみキャプチャ。
 ///     `requestPermission` でシステムダイアログを表示する。
 /// - macOS:
-///     ScreenCaptureKit ベースの内部音声キャプチャ(フェーズ3で実装予定)。
+///     ScreenCaptureKit + SCStream(capturesAudio = true)。
+///     初回起動時に「画面録画」許可ダイアログが OS から出る。
 /// - Windows:
-///     WASAPI loopback ベースのキャプチャ(フェーズ4で実装予定)。
+///     WASAPI loopback。`audio_mixer_plugin.dll` 内の loopback API を FFI で叩く。
+///     [WindowsLoopbackService] を内部で起動し、polling で取得する。
 class ScreenAudioCaptureService {
   static const _methodChannel =
       MethodChannel('com.example.local_audio_sync/broadcast');
@@ -30,6 +33,8 @@ class ScreenAudioCaptureService {
       EventChannel('com.example.local_audio_sync/screenAudio');
 
   StreamSubscription? _sub;
+  StreamSubscription? _windowsSub;
+  WindowsLoopbackService? _windowsLoopback;
   final StreamController<Uint8List> _pcmController =
       StreamController<Uint8List>.broadcast();
 
@@ -58,10 +63,44 @@ class ScreenAudioCaptureService {
 
   /// iOS では UDS リスナを起動するだけで、実際に PCM が来始めるのは
   /// ユーザーが Broadcast Picker でブロードキャストを開始した後。
-  /// Android では MediaProjection が既に許可済み前提でキャプチャを開始する。
+  /// Android / macOS では即座にキャプチャ開始。
+  /// Windows では FFI 経由で audio_mixer_plugin.dll の loopback API を起動。
   Future<void> start() async {
     if (_isCapturing) return;
 
+    if (Platform.isWindows) {
+      try {
+        final loop = WindowsLoopbackService();
+        await loop.start();
+        _windowsLoopback = loop;
+
+        // Windows loopback はすでに 20ms チャンクで来るが、一応 chunker を通す
+        final chunker = PcmChunker();
+        _windowsSub = loop.pcmStream.listen(
+          (raw) {
+            for (final chunk in chunker.add(raw)) {
+              _pcmController.add(chunk);
+            }
+          },
+          onError: (Object err, StackTrace st) {
+            debugPrint(
+                '[ScreenAudioCaptureService] Windows loopback error: $err\n$st');
+            _pcmController.addError(err);
+          },
+        );
+        _isCapturing = true;
+      } catch (e) {
+        _pcmController.addError(
+          ScreenAudioStartException(
+            code: 'WINDOWS_LOOPBACK_FAILED',
+            message: '$e',
+          ),
+        );
+      }
+      return;
+    }
+
+    // iOS / macOS / Android(MethodChannel + EventChannel 経路)
     try {
       if (Platform.isIOS) {
         await _methodChannel.invokeMethod<void>('startBroadcastReceiver');
@@ -87,8 +126,6 @@ class ScreenAudioCaptureService {
     }
 
     // 受信した生バイトを 20ms チャンク(kBytesPerChunk = 3840 byte)に揃える。
-    // 一度の Event で複数チャンクが届くこともあれば、端数だけのこともある。
-    // 端数は PcmChunker が次回まで保持してくれる。
     final chunker = PcmChunker();
     _sub = _eventChannel.receiveBroadcastStream().listen(
       (dynamic raw) {
@@ -112,6 +149,15 @@ class ScreenAudioCaptureService {
   Future<void> stop() async {
     if (!_isCapturing) return;
     _isCapturing = false;
+
+    if (Platform.isWindows) {
+      await _windowsSub?.cancel();
+      _windowsSub = null;
+      await _windowsLoopback?.stop();
+      _windowsLoopback = null;
+      return;
+    }
+
     await _sub?.cancel();
     _sub = null;
     try {
@@ -121,7 +167,6 @@ class ScreenAudioCaptureService {
         await _methodChannel.invokeMethod<void>('stopScreenCapture');
       }
     } catch (e) {
-      // 停止時のエラーは黙って飲み込む(既に止まっている可能性が高い)
       debugPrint('[ScreenAudioCaptureService] stop 中の例外を無視: $e');
     }
   }
@@ -141,6 +186,8 @@ class ScreenAudioCaptureService {
 
   void dispose() {
     stop();
+    _windowsLoopback?.dispose();
+    _windowsLoopback = null;
     _pcmController.close();
   }
 }
