@@ -132,12 +132,18 @@ if(PLUGIN_BUNDLED_LIBRARIES)
 endif()
 
 # Copy the native assets provided by the build.dart from all packages.
+#
+# 注意: 元のテンプレートでは `if(EXISTS)` で囲っていたが、CMake configure は
+# `flutter assemble` より先に走ることがあり、その場合この時点で
+# native_assets ディレクトリは未生成 → install 命令が登録されず INSTALL で
+# コピーされない、という初回ビルド失敗の原因になる。
+# install 実行時にディレクトリが無くても CMake は無害にスキップするので、
+# `if(EXISTS)` ガードは不要。
 set(NATIVE_ASSETS_DIR "${CMAKE_CURRENT_BINARY_DIR}/../../native_assets/windows/")
-if(EXISTS "${NATIVE_ASSETS_DIR}")
-  install(DIRECTORY "${NATIVE_ASSETS_DIR}"
-     DESTINATION "${INSTALL_BUNDLE_LIB_DIR}"
-     COMPONENT Runtime)
-endif()
+install(DIRECTORY "${NATIVE_ASSETS_DIR}"
+   DESTINATION "${INSTALL_BUNDLE_LIB_DIR}"
+   COMPONENT Runtime
+   OPTIONAL)
 
 # Fully re-copy the assets directory on each build to avoid having stale files
 # from a previous install.
@@ -146,10 +152,10 @@ install(CODE "
   file(REMOVE_RECURSE \"${INSTALL_BUNDLE_DATA_DIR}/${FLUTTER_ASSET_DIR_NAME}\")
   " COMPONENT Runtime)
 set(FLUTTER_ASSETS_PATH "${CMAKE_CURRENT_BINARY_DIR}/../../${FLUTTER_ASSET_DIR_NAME}")
-if(EXISTS "${FLUTTER_ASSETS_PATH}")
-  install(DIRECTORY "${FLUTTER_ASSETS_PATH}"
-    DESTINATION "${INSTALL_BUNDLE_DATA_DIR}" COMPONENT Runtime)
-endif()
+# 同様の理由で `if(EXISTS)` を外す。flutter_assets は INSTALL 実行時には
+# `flutter assemble` が完了して必ず存在する。CMake configure 時の有無は無関係。
+install(DIRECTORY "${FLUTTER_ASSETS_PATH}"
+  DESTINATION "${INSTALL_BUNDLE_DATA_DIR}" COMPONENT Runtime)
 
 # Install the AOT library on non-Debug builds only.
 install(FILES "${AOT_LIBRARY}" DESTINATION "${INSTALL_BUNDLE_DATA_DIR}"

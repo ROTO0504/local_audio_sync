@@ -52,8 +52,15 @@ target_link_libraries(audio_mixer_plugin PRIVATE
 # ---------------------------------------------------------------------------
 # Install the DLL next to the Flutter runner executable so that it can be
 # found at runtime without modifying PATH.
+#
+# 重要: DESTINATION は相対パス "." を使う。`${CMAKE_INSTALL_PREFIX}` を
+# 直接埋め込むと、`add_subdirectory(audio_mixer_plugin)` 時点の値(デフォルト
+# `C:/Program Files/<project>`)が固定されてしまい、親プロジェクトが後から
+# 設定する build/windows/Release/ にファイルが届かず、管理者権限が必要な
+# パスへの書き込みで失敗する。相対パスにすれば install 実行時の最終的な
+# CMAKE_INSTALL_PREFIX が使われる。
 # ---------------------------------------------------------------------------
 install(TARGETS audio_mixer_plugin
-    RUNTIME DESTINATION "${CMAKE_INSTALL_PREFIX}"
+    RUNTIME DESTINATION "."
     COMPONENT Runtime
 )

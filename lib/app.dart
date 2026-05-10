@@ -79,8 +79,11 @@ class _LocalAudioSyncAppState extends ConsumerState<LocalAudioSyncApp> {
         colorScheme: ColorScheme.fromSeed(seedColor: Colors.blueAccent),
         useMaterial3: true,
       ),
-      // 日本語対応のロケール指定。Material/Cupertino のデフォルト英語ラベルを抑止。
-      locale: const Locale('ja', 'JP'),
+      // ロケールは OS の設定を継承させる。
+      // 明示的に locale: ja_JP を渡すには flutter_localizations の
+      // localizationsDelegates が必要だが、UI 文字列は全部ハードコード済みなので
+      // 不要。delegate なしで locale だけ指定すると MaterialApp が組み立て中に
+      // 例外を投げて画面が真っ黒になる(2026-05-11 検証で判明)。
       routerConfig: _router,
     );
   }
