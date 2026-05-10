@@ -5,13 +5,23 @@ on:
     branches:
       - main
       - develop
+  pull_request:
+    branches:
+      - main
 
 env:
   FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
 
+# 注意:
+# このワークフローは Runner ターゲットの "コンパイル確認" のみを行います。
+# Broadcast Upload Extension(ios/BroadcastExtension/)は Xcode 上で
+# 別ターゲットとして手動追加する前提のため、CI のデフォルトビルドには
+# 含まれません(pbxproj に登録されていないため)。
+# 詳細は docs/iOS_BROADCAST_SETUP.md を参照してください。
+# 実機テストは AltStore / Sideloadly / Mac + USB のいずれかで行ってください。
 jobs:
   build-ios:
-    runs-on: macos-latest
+    runs-on: macos-14
 
     steps:
       - name: Checkout repository
