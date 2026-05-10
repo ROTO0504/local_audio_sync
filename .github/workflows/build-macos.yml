@@ -19,7 +19,7 @@ jobs:
 
     steps:
       - name: Checkout repository
-        uses: actions/checkout@v4
+        uses: actions/checkout@v5
 
       - name: Set up Flutter
         uses: subosito/flutter-action@v2
@@ -34,7 +34,7 @@ jobs:
         run: flutter build macos --release
 
       - name: Upload macOS app artifact
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v5
         with:
           name: macos-app
           path: build/macos/Build/Products/Release/local_audio_sync.app

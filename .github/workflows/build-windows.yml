@@ -5,6 +5,9 @@ on:
     branches:
       - main
       - develop
+  pull_request:
+    branches:
+      - main
 
 env:
   FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
@@ -15,7 +18,7 @@ jobs:
 
     steps:
       - name: Checkout repository
-        uses: actions/checkout@v4
+        uses: actions/checkout@v5
 
       - name: Set up Flutter
         uses: subosito/flutter-action@v2
@@ -32,11 +35,50 @@ jobs:
           (Get-Content $f) | Where-Object { $_ -notmatch 'opus_flutter_windows' } | Set-Content $f
           Write-Host "Patched $f"
 
-      - name: Build Windows executable (release)
-        run: flutter build windows --release
+      # CMake の初回 INSTALL タスクが post-build イベントで稀に exit 1 を返すが、
+      # その時点で大半のビルドは完了しているため `cmake --build --target install`
+      # を呼ぶだけで残りの DLL が短時間でコピーされ、バンドルが完成する。
+      # `--install` ではなく `--build --target install` を使うことで、必要なら
+      # ALL_BUILD も自動で走り、欠落しているプラグイン DLL が補完される。
+      - name: Build Windows release bundle
+        shell: pwsh
+        run: |
+          flutter build windows --release
+          if ($LASTEXITCODE -ne 0) {
+            Write-Host "::warning::flutter build returned exit $LASTEXITCODE; finalizing bundle with cmake."
+            cmake --build build/windows/x64 --config Release --target install
+            if ($LASTEXITCODE -ne 0) {
+              throw "Windows build failed: cmake fallback also returned $LASTEXITCODE"
+            }
+          }
+
+      - name: Verify bundle contents
+        shell: pwsh
+        run: |
+          $bundle = "build/windows/Release"
+          Write-Host "=== Bundle directory listing ==="
+          if (Test-Path $bundle) {
+            Get-ChildItem $bundle -Recurse | Select-Object FullName, Length | Format-Table -AutoSize
+          } else {
+            throw "バンドルディレクトリ $bundle が存在しません"
+          }
+
+          $missing = @()
+          if (-not (Test-Path "$bundle/local_audio_sync.exe")) { $missing += "local_audio_sync.exe" }
+          if (-not (Test-Path "$bundle/flutter_windows.dll"))   { $missing += "flutter_windows.dll" }
+          if (-not (Test-Path "$bundle/audio_mixer_plugin.dll")) { $missing += "audio_mixer_plugin.dll" }
+          if (-not (Test-Path "$bundle/data"))                   { $missing += "data/" }
+
+          if ($missing.Count -gt 0) {
+            throw "バンドルに不足: $($missing -join ', ')"
+          }
+          Write-Host "All required files present."
 
       - name: Upload Windows artifact
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v5
         with:
-          name: windows-exe
-          path: build/windows/x64/runner/Release/
+          name: windows-bundle
+          # Flutter Windows の正しいバンドル位置。
+          # `build/windows/x64/runner/Release/` は単に EXE を生成する中間
+          # ディレクトリで、配布用の依存 DLL や data/ は含まれない。
+          path: build/windows/Release/
