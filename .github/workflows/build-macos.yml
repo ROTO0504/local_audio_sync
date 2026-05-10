@@ -1,13 +1,9 @@
 name: Build macOS
 
+# 課金枠を抑えるため、macOS runner(1分=10分カウント)は手動トリガのみ。
+# リリース前など必要なタイミングで GitHub UI の "Run workflow" から実行する。
 on:
-  push:
-    branches:
-      - main
-      - develop
-  pull_request:
-    branches:
-      - main
+  workflow_dispatch:
 
 env:
   FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
