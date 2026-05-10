@@ -38,6 +38,7 @@ class _ClientScreenState extends ConsumerState<ClientScreen> {
   final _uuid = const Uuid().v4();
 
   StreamSubscription? _discoverySub;
+  StreamSubscription? _hubLostSub;
   StreamSubscription? _captureSub;
   Timer? _broadcastingPoll;
 
@@ -67,8 +68,19 @@ class _ClientScreenState extends ConsumerState<ClientScreen> {
     try {
       await _discovery.start();
       _discoverySub = _discovery.stream.listen(_onHubFound);
+      _hubLostSub = _discovery.hubLostStream.listen((_) => _onHubLost());
     } catch (e) {
       _showSnack('Hub 検索の開始に失敗しました: $e');
+    }
+  }
+
+  Future<void> _onHubLost() async {
+    debugPrint('[ClientScreen] Hub のビーコンが途絶えたので再探索状態に戻ります');
+    _sender.disconnect();
+    _connectingToHub = false;
+    if (mounted) {
+      ref.read(clientStateProvider.notifier).setSearching();
+      _showSnack('Hub への接続を見失いました。再探索しています...');
     }
   }
 
@@ -176,7 +188,8 @@ class _ClientScreenState extends ConsumerState<ClientScreen> {
     _broadcastingPoll = null;
     _stop();
     _discoverySub?.cancel();
-    _discovery.stop();
+    _hubLostSub?.cancel();
+    _discovery.dispose();
     _encoder.dispose();
     _capture.dispose();
     super.dispose();

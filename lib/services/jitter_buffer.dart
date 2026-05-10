@@ -1,98 +1,142 @@
 import 'dart:collection';
 import 'dart:typed_data';
 
-/// Fixed-delay jitter buffer for Opus audio packets.
-/// Holds [targetDelayFrames] frames before starting playback.
-/// Sequence numbers are uint32 and wrap around at 0xFFFFFFFF.
+/// Opus 音声パケット用の固定遅延ジッターバッファ。
+///
+/// 主な責務:
+/// 1. パケットの順序復元(順不同で届いた seq を昇順に並べ直す)
+/// 2. 起動時の初期遅延確保(targetDelayFrames 分溜まるまで再生開始しない)
+/// 3. パケットロス時に PLC(Packet Loss Concealment)用に null を返す
+/// 4. **シーケンス断絶検出と自動再同期**(本コミットで追加)
+///
+/// 旧実装の弱点:
+///   - reset() を呼ばない限り、一度同期外れすると永遠に古いパケットとして
+///     棄却され続け、復帰しなかった
+///   - 送信側がアプリ再起動などで seq を 0 から振り直したとき追従できなかった
+///
+/// 本実装では `resyncThresholdFrames`(既定 100 = 約 2 秒)以上 seq が乖離した
+/// 場合、内部状態を新しい seq に合わせてリセットして再同期する。
+/// その際、外部から接続経路にも合わせて再同期トークンを通知できるよう
+/// `onResyncDetected` コールバックを呼び出す(送信側に RESYNC を送る等の用途)。
 class JitterBuffer {
+  /// 再生開始までに溜める最低フレーム数。
   final int targetDelayFrames;
+
+  /// バッファに溜めて良い最大フレーム数。これを超えたら古い順に捨てる。
   final int maxBufferFrames;
+
+  /// この値以上 seq が乖離(過去でも未来でも)したら強制リセットする閾値。
+  /// 32bit seq の半分以下に収まる必要がある。
+  final int resyncThresholdFrames;
+
+  /// 自動再同期が発火したときに呼ばれるコールバック(任意)。
+  /// 引数は新しい先頭 seq。
+  final void Function(int newSeq)? onResyncDetected;
 
   final SplayTreeMap<int, Uint8List> _buffer = SplayTreeMap();
   int? _nextExpectedSeq;
-  // True once we have committed to playing back (enough frames have buffered).
-  // Before this flag is set, hasData returns false when the buffer is below
-  // targetDelayFrames so that _drainJitterBuffer exits the while-loop instead
-  // of spinning forever on a pop() call that returns null without consuming.
   bool _playbackStarted = false;
   int _totalReceived = 0;
   int _totalDropped = 0;
+  int _totalResynced = 0;
 
   JitterBuffer({
     this.targetDelayFrames = 2,
     this.maxBufferFrames = 5,
-  });
+    this.resyncThresholdFrames = 100,
+    this.onResyncDetected,
+  })  : assert(targetDelayFrames >= 1),
+        assert(maxBufferFrames >= targetDelayFrames),
+        assert(resyncThresholdFrames > 1 &&
+            resyncThresholdFrames < 0x7FFFFFFF);
 
-  /// Push an incoming Opus packet. Returns true if accepted.
+  /// 新しい Opus パケットを差し込む。受け入れたら true、拒否(古すぎる等)で false。
   bool push(int sequence, Uint8List opusBytes) {
     _totalReceived++;
 
-    // Initialize expected sequence on first packet
-    _nextExpectedSeq ??= sequence;
+    if (_nextExpectedSeq == null) {
+      // 初パケットは無条件採用
+      _nextExpectedSeq = sequence;
+    } else {
+      final expected = _nextExpectedSeq!;
+      final forwardDistance = (sequence - expected) & 0xFFFFFFFF;
+      final backwardDistance = (expected - sequence) & 0xFFFFFFFF;
 
-    // Drop significantly out-of-order packets (already played)
-    final expected = _nextExpectedSeq!;
-    if (_isOlderThan(sequence, expected)) {
-      _totalDropped++;
-      return false;
+      // 期待 seq から大きく離れすぎていたら再同期(送信側リセット等)
+      if (forwardDistance >= resyncThresholdFrames &&
+          backwardDistance >= resyncThresholdFrames) {
+        _resyncTo(sequence);
+      } else if (_isOlderThan(sequence, expected)) {
+        // 既に再生済み区間と判定 → 棄却
+        _totalDropped++;
+        return false;
+      }
     }
 
     _buffer[sequence] = opusBytes;
 
-    // Overflow: drop oldest if buffer too full
+    // 溢れたら古い順から落とす
     while (_buffer.length > maxBufferFrames) {
       _buffer.remove(_buffer.firstKey());
       _totalDropped++;
     }
-
     return true;
   }
 
-  /// Pop the next frame. Returns null if not yet ready or packet lost (PLC needed).
-  /// Call this every 20ms (one Opus frame interval).
+  /// 次フレームを取り出す。null = まだ準備未完 or パケットロス(PLC を呼ぶこと)。
+  /// 20ms ごとに呼び出すこと(再生コールバックや FFI ミキサーから)。
   Uint8List? pop() {
     if (_nextExpectedSeq == null) return null;
 
-    // During the initial buffering phase wait until we have enough frames so
-    // that _drainJitterBuffer's while(hasData) loop cannot spin forever.
-    if (!_playbackStarted && _buffer.length < targetDelayFrames) return null;
+    if (!_playbackStarted && _buffer.length < targetDelayFrames) {
+      return null;
+    }
 
     final seq = _nextExpectedSeq!;
     _nextExpectedSeq = _wrappedIncrement(seq);
-    // Once we commit to advancing the sequence we are in playback mode,
-    // regardless of whether this frame was a real packet or a PLC slot.
     _playbackStarted = true;
 
-    final frame = _buffer.remove(seq);
-    return frame; // null = lost packet → caller should use PLC
+    return _buffer.remove(seq); // null = 紛失 → 呼び出し側が PLC 適用
   }
 
-  /// True when there is data worth draining right now.
-  /// Before playback starts we require at least [targetDelayFrames] packets so
-  /// that pop() never returns null-without-consuming (which would infinite-loop
-  /// _drainJitterBuffer on Windows when FFI is active).
+  /// 描画/取り出し前の判定。再生開始前は targetDelayFrames まで貯まったか確認。
   bool get hasData {
     if (_nextExpectedSeq == null) return false;
     if (!_playbackStarted) return _buffer.length >= targetDelayFrames;
     return _buffer.isNotEmpty;
   }
+
   int get bufferedCount => _buffer.length;
   int get totalReceived => _totalReceived;
   int get totalDropped => _totalDropped;
+  int get totalResynced => _totalResynced;
+  int? get nextExpectedSeq => _nextExpectedSeq;
 
+  /// 完全初期化(切断時や手動再同期時)。
   void reset() {
     _buffer.clear();
     _nextExpectedSeq = null;
     _playbackStarted = false;
     _totalReceived = 0;
     _totalDropped = 0;
+    _totalResynced = 0;
+  }
+
+  /// 内部の seq 状態だけ新しい seq に切り替える(統計はクリアしない)。
+  /// 再生中の状態は保ちつつ追従させる。
+  void _resyncTo(int newSeq) {
+    _buffer.clear();
+    _nextExpectedSeq = newSeq;
+    _playbackStarted = false;
+    _totalResynced++;
+    onResyncDetected?.call(newSeq);
   }
 
   static int _wrappedIncrement(int seq) => (seq + 1) & 0xFFFFFFFF;
 
-  /// Returns true if [seq] is older than [reference] (accounting for wrap-around).
+  /// 32bit ラップを考慮した「より古い」判定。
   static bool _isOlderThan(int seq, int reference) {
     final diff = (seq - reference) & 0xFFFFFFFF;
-    return diff > 0x7FFFFFFF; // More than half the range behind = older
+    return diff > 0x7FFFFFFF;
   }
 }
