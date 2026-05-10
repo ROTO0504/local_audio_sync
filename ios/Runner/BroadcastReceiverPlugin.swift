@@ -168,6 +168,10 @@ import Darwin
         recvRunning = true
         lastPacketTime = monotonicNow()
 
+        // バックグラウンドでも UDP 送信が走り続けるよう、AudioSession を起動する。
+        // これは Extension のセッションとは独立して、メインアプリの background 維持のため。
+        AudioSessionManager.shared.activate()
+
         // バックグラウンドで recvfrom ループ
         recvQueue.async { [weak self] in
             self?.runReceiveLoop()
@@ -184,6 +188,7 @@ import Darwin
             close(recvFd)
             recvFd = -1
         }
+        AudioSessionManager.shared.deactivate()
         result(nil)
     }
 
@@ -220,6 +225,7 @@ import Darwin
             close(recvFd)
             recvFd = -1
         }
+        AudioSessionManager.shared.deactivate()
     }
 
     private func monotonicNow() -> TimeInterval {
