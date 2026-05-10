@@ -3,6 +3,7 @@ import 'dart:io';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'package:go_router/go_router.dart';
 import 'package:uuid/uuid.dart';
 import '../providers/app_mode_provider.dart';
 import '../providers/client_state_provider.dart';
@@ -211,6 +212,7 @@ class _ClientScreenState extends ConsumerState<ClientScreen> {
             onPressed: () async {
               await _stop();
               await ref.read(appModeProvider.notifier).reset();
+              if (context.mounted) context.go('/setup');
             },
           ),
         ],

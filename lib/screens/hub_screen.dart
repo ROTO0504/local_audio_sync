@@ -1,6 +1,7 @@
 import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'package:go_router/go_router.dart';
 import '../models/client_info.dart';
 import '../providers/app_mode_provider.dart';
 import '../providers/hub_state_provider.dart';
@@ -149,6 +150,11 @@ class _HubScreenState extends ConsumerState<HubScreen> {
         title: Text('Hub — $name'),
         actions: [
           IconButton(
+            icon: const Icon(Icons.swap_horiz),
+            tooltip: '役割を切り替え',
+            onPressed: _switchToSetup,
+          ),
+          IconButton(
             icon: const Icon(Icons.settings),
             tooltip: '設定',
             onPressed: _showSettings,
@@ -170,6 +176,23 @@ class _HubScreenState extends ConsumerState<HubScreen> {
               ],
             ),
     );
+  }
+
+  /// Hub を停止して役割選択画面へ戻る。Mixer / 受信ループ / ビーコン送信を
+  /// すべて止めてから AppMode を null に戻し、明示的に /setup へ遷移する。
+  /// (go_router の redirect は遷移時にしか評価されないため、provider を
+  ///  null にするだけでは画面が変わらない)
+  Future<void> _switchToSetup() async {
+    _staleTimer?.cancel();
+    _staleTimer = null;
+    _beacon.stop();
+    _receiver.stop();
+    _mixer.removeAllClients();
+
+    await ref.read(appModeProvider.notifier).reset();
+    if (mounted) {
+      context.go('/setup');
+    }
   }
 
   void _showSettings() {
@@ -201,11 +224,10 @@ class _HubScreenState extends ConsumerState<HubScreen> {
             ),
             ListTile(
               leading: const Icon(Icons.swap_horiz),
-              title: const Text('クライアントモードへ切替'),
-              onTap: () async {
+              title: const Text('役割選択画面へ戻る'),
+              onTap: () {
                 Navigator.of(context).pop();
-                await ref.read(appModeProvider.notifier).reset();
-                if (mounted) context.mounted;
+                _switchToSetup();
               },
             ),
           ],
