@@ -79,6 +79,8 @@ class _LocalAudioSyncAppState extends ConsumerState<LocalAudioSyncApp> {
         colorScheme: ColorScheme.fromSeed(seedColor: Colors.blueAccent),
         useMaterial3: true,
       ),
+      // 日本語対応のロケール指定。Material/Cupertino のデフォルト英語ラベルを抑止。
+      locale: const Locale('ja', 'JP'),
       routerConfig: _router,
     );
   }

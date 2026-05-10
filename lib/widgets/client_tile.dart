@@ -75,9 +75,9 @@ class ClientTile extends ConsumerWidget {
 
             // Volume % label
             SizedBox(
-              width: 36,
+              width: 48,
               child: Text(
-                client.isMuted ? 'MUTE' : '${(client.volume * 100).round()}%',
+                client.isMuted ? 'ミュート' : '${(client.volume * 100).round()}%',
                 style: TextStyle(
                   fontSize: 11,
                   color: client.isMuted ? Colors.red : Colors.black87,

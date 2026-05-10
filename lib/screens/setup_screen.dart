@@ -12,7 +12,7 @@ class SetupScreen extends ConsumerStatefulWidget {
 }
 
 class _SetupScreenState extends ConsumerState<SetupScreen> {
-  final _nameController = TextEditingController(text: 'My Device');
+  final _nameController = TextEditingController(text: 'マイデバイス');
   bool _loading = false;
 
   @override
@@ -49,17 +49,17 @@ class _SetupScreenState extends ConsumerState<SetupScreen> {
               ),
               const SizedBox(height: 8),
               const Text(
-                'Share microphone audio over your local network',
+                'ローカルネットワーク内で内部音声を集約・共有',
                 textAlign: TextAlign.center,
                 style: TextStyle(color: Colors.grey),
               ),
               const SizedBox(height: 40),
 
-              // Device name field
+              // デバイス名フィールド
               TextField(
                 controller: _nameController,
                 decoration: const InputDecoration(
-                  labelText: 'Device name',
+                  labelText: 'デバイス名',
                   border: OutlineInputBorder(),
                   prefixIcon: Icon(Icons.devices),
                 ),
@@ -67,26 +67,26 @@ class _SetupScreenState extends ConsumerState<SetupScreen> {
               const SizedBox(height: 32),
 
               const Text(
-                'Select your role:',
+                '役割を選択してください',
                 style: TextStyle(fontWeight: FontWeight.w600),
               ),
               const SizedBox(height: 12),
 
-              // Hub card
+              // Hub
               _RoleCard(
                 icon: Icons.hub,
-                title: 'Hub',
-                subtitle: 'Receive & mix audio from all clients\n(recommended for Windows)',
+                title: 'Hub(集約・再生)',
+                subtitle: '全クライアントの音声を受信してミックス再生\n(Windows 推奨)',
                 color: Colors.deepPurple,
                 onTap: _loading ? null : () => _select(AppMode.hub),
               ),
               const SizedBox(height: 12),
 
-              // Client card
+              // Client
               _RoleCard(
-                icon: Icons.mic,
-                title: 'Client',
-                subtitle: 'Broadcast microphone to the Hub\n(Android, iPhone, iPad, Mac)',
+                icon: Icons.cell_tower,
+                title: 'クライアント(送信)',
+                subtitle: 'このデバイスで再生中の音声を Hub へ配信\n(iPhone / iPad / Mac / Windows / Android)',
                 color: Colors.teal,
                 onTap: _loading ? null : () => _select(AppMode.client),
               ),

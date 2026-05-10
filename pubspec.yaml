@@ -19,15 +19,9 @@ dependencies:
   # Persistence
   shared_preferences: ^2.3.3
 
-  # Microphone capture (Android, iOS, macOS, Windows)
-  record: ^6.2.0
-
   # Opus codec encode/decode via FFI
   opus_dart: ^3.0.1
   opus_flutter: ^3.0.1
-
-  # Permission requests
-  permission_handler: ^11.3.1
 
   # Local IP address resolution
   network_info_plus: ^6.0.1

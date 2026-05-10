@@ -32,14 +32,13 @@ class AudioBroadcastService : Service() {
         val notification = buildNotification()
 
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
-            // API 34+ requires MEDIA_PROJECTION type when capturing screen audio
-            val fgType = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.UPSIDE_DOWN_CAKE) {
-                ServiceInfo.FOREGROUND_SERVICE_TYPE_MICROPHONE or
-                    ServiceInfo.FOREGROUND_SERVICE_TYPE_MEDIA_PROJECTION
-            } else {
-                ServiceInfo.FOREGROUND_SERVICE_TYPE_MICROPHONE
-            }
-            startForeground(NOTIFICATION_ID, notification, fgType)
+            // 内部音声(他アプリの音)を MediaProjection でキャプチャするので
+            // mediaProjection 単独のフォアグラウンドサービス種別で起動する。
+            startForeground(
+                NOTIFICATION_ID,
+                notification,
+                ServiceInfo.FOREGROUND_SERVICE_TYPE_MEDIA_PROJECTION
+            )
         } else {
             startForeground(NOTIFICATION_ID, notification)
         }
@@ -68,10 +67,10 @@ class AudioBroadcastService : Service() {
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
             val channel = NotificationChannel(
                 CHANNEL_ID,
-                "Audio Broadcasting",
+                "音声配信",
                 NotificationManager.IMPORTANCE_LOW
             ).apply {
-                description = "Active while broadcasting microphone to hub"
+                description = "ハブへの内部音声配信中に表示"
                 setSound(null, null)
             }
             val nm = getSystemService(NotificationManager::class.java)
@@ -81,8 +80,8 @@ class AudioBroadcastService : Service() {
 
     private fun buildNotification(): Notification {
         return NotificationCompat.Builder(this, CHANNEL_ID)
-            .setContentTitle("Broadcasting Audio")
-            .setContentText("Sending microphone audio to the hub")
+            .setContentTitle("内部音声を配信中")
+            .setContentText("ローカルネットワークの Hub へ音声を送信しています")
             .setSmallIcon(android.R.drawable.ic_btn_speak_now)
             .setOngoing(true)
             .setSilent(true)
