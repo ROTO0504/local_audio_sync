@@ -1,12 +1,17 @@
 import 'dart:async';
 import 'dart:typed_data';
 import 'package:record/record.dart';
+import 'pcm_constants.dart';
 
-const int kSampleRate = 48000;
-const int kChannels = 2; // stereo
-const int kFramesPerChunk = 960; // 20ms at 48kHz
-const int kBytesPerChunk = kFramesPerChunk * kChannels * 2; // 16-bit
+// 旧来の場所から定数を読みたいコードのために再エクスポート。
+// フェーズ5でマイク経路と一緒に消す予定。
+export 'pcm_constants.dart' show kSampleRate, kChannels, kFramesPerChunk, kBytesPerChunk;
 
+/// マイク音声キャプチャ。**現在は新方針(内部音声のみ)で利用していない**。
+///
+/// docs/PLAN.md フェーズ5 でこのファイル全体を削除予定。
+/// 既存テストの後方互換のため一時的に残置。
+@Deprecated('Use ScreenAudioCaptureService. Mic capture path will be removed in phase 5.')
 class AudioCaptureService {
   final AudioRecorder _recorder = AudioRecorder();
   StreamSubscription<Uint8List>? _sub;
@@ -36,7 +41,6 @@ class AudioCaptureService {
 
     _isRecording = true;
 
-    // Buffer incoming bytes into exact kBytesPerChunk chunks
     var carry = <int>[];
     _sub = stream.listen(
       (data) {
@@ -65,14 +69,7 @@ class AudioCaptureService {
     _recorder.dispose();
   }
 
-  /// Compute RMS level 0.0–1.0 for VU meter from a PCM16 chunk.
-  static double computeRmsLevel(Uint8List pcm16) {
-    final samples = pcm16.buffer.asInt16List();
-    if (samples.isEmpty) return 0.0;
-    double sumSq = 0;
-    for (final s in samples) {
-      sumSq += (s / 32768.0) * (s / 32768.0);
-    }
-    return (sumSq / samples.length).clamp(0.0, 1.0);
-  }
+  /// PCM16 チャンクから RMS(VU メーター用)レベルを計算する委譲。
+  /// 新コードは [computePcm16RmsLevel] を直接使うこと。
+  static double computeRmsLevel(Uint8List pcm16) => computePcm16RmsLevel(pcm16);
 }
