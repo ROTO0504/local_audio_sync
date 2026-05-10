@@ -1,66 +1,107 @@
 # local-audio-sync
 
-ローカルネットワーク（LAN）上の複数デバイスのマイク音声を Windows PC に集約して再生するアプリです。
-Android・iPhone・iPad・macOS・Windows の各デバイスがクライアントとして動作し、Opus コーデックで圧縮した音声を UDP で Windows ハブに送信します。
+ローカルネットワーク(LAN)上の **複数デバイスで再生されている内部音声**(他アプリの音 = Spotify / YouTube / ゲーム等)を、Wi-Fi 経由で 1 台の **Hub** に集約してまとめて再生するアプリです。
+
+iPhone / iPad / macOS / Windows / Android がクライアントとして動作し、それぞれの OS のネイティブ API で内部音声をキャプチャし、Opus で圧縮した音声を UDP で Windows ハブへ送信します。
+
+> **マイク機能は廃止しました**(2026-05-10)。集めるのは「他アプリの音」だけです。
+> 詳細は [docs/PLAN.md](docs/PLAN.md) を参照。
 
 ---
 
 ## 目次
 
-1. [概要と構成](#概要と構成)
-2. [動作要件](#動作要件)
-3. [セットアップ手順](#セットアップ手順)
-4. [使い方](#使い方)
-5. [通信プロトコル詳細](#通信プロトコル詳細)
-6. [プロジェクト構造](#プロジェクト構造)
-7. [ビルド方法](#ビルド方法)
-8. [テスト](#テスト)
-9. [CI/CD](#cicd)
-10. [トラブルシューティング](#トラブルシューティング)
+1. [できること / できないこと](#できること--できないこと)
+2. [全体アーキテクチャ](#全体アーキテクチャ)
+3. [動作要件](#動作要件)
+4. [セットアップ手順](#セットアップ手順)
+5. [使い方](#使い方)
+6. [プラットフォーム別の内部音声キャプチャ詳細](#プラットフォーム別の内部音声キャプチャ詳細)
+7. [通信プロトコル詳細](#通信プロトコル詳細)
+8. [プロジェクト構造](#プロジェクト構造)
+9. [ビルド方法](#ビルド方法)
+10. [テスト](#テスト)
+11. [CI/CD](#cicd)
+12. [トラブルシューティング](#トラブルシューティング)
 
 ---
 
-## 概要と構成
+## できること / できないこと
+
+### できること
+
+- iPhone / iPad / macOS / Windows / Android で再生している **他アプリの音声** を取得
+- LAN 内の Hub(Windows)に集約して再生
+- 各クライアントごとに音量調整 / ミュート
+- 自動探索(Hub のビーコンをクライアントが検出)
+- Hub 喪失時の自動再探索、UDP ソケット死亡時の自動再生成
+- 同期ずれ時の自動再同期(JitterBuffer 内蔵)
+
+### できないこと
+
+| 制限 | 理由 |
+| --- | --- |
+| マイクの音声を送る | 用途を内部音声に絞ったため(2026-05-10 仕様確定) |
+| Apple Music / Netflix / Amazon Prime Video など DRM 保護コンテンツの音声を取得 | iOS / Android / macOS の OS 仕様で取得不可 |
+| インターネット越し配信 | LAN 限定設計(NAT 越え非対応) |
+| Hub を Windows 以外で動かす | miniaudio ベースの C++ ミキサーが現状 Windows ビルド対象 |
+
+---
+
+## 全体アーキテクチャ
 
 ```text
-[Android / iPhone / iPad / macOS / Windows（クライアント）]
-        マイク入力
-          ↓
-      Opus エンコード（128 kbps / 48 kHz / ステレオ）
-          ↓
-     UDP ユニキャスト → ポート 7777
-          ↓
-   [Windows ハブ（このアプリ）]
-          ↓
-      Opus デコード × クライアント数（最大 16 台）
-          ↓
-      クライアントごとの音量調整
-          ↓
-      float32 PCM ミキシング（C++ / miniaudio）
-          ↓
-      スピーカー出力
+┌──────────────────────────────────────────────────────────────────┐
+│  クライアント(送信側)                                            │
+│                                                                  │
+│  [OS 別の内部音声キャプチャ]                                      │
+│   - iOS / iPadOS: Broadcast Upload Extension(別プロセス)        │
+│       └ App Group 共有 UNIX Domain Socket → メインアプリ         │
+│   - Android: MediaProjection + AudioPlaybackCaptureConfiguration │
+│   - macOS: ScreenCaptureKit + SCStream(capturesAudio = true)     │
+│   - Windows: WASAPI loopback(audio_mixer_plugin.dll)             │
+│                                                                  │
+│  ↓ PCM16 / 48kHz / ステレオ / 20ms フレーム                       │
+│  Opus エンコード(128 kbps)                                       │
+│  ↓                                                               │
+│  UDP ユニキャスト(ポート 7777)                                  │
+└──────────────────────────────────────────────────────────────────┘
+                              │
+                              ↓
+┌──────────────────────────────────────────────────────────────────┐
+│  Hub(Windows)                                                   │
+│                                                                  │
+│  UDP 受信 → クライアントごとのジッターバッファ(再同期つき)        │
+│  → Opus デコード(PLC 対応)                                       │
+│  → 個別音量調整                                                   │
+│  → miniaudio ミキサー(C++ FFI)                                  │
+│  → スピーカー出力                                                 │
+└──────────────────────────────────────────────────────────────────┘
 ```
 
-### ディスカバリー（自動検出）
+### 自動検出(ディスカバリー)
 
-- Hub が UDP ブロードキャスト（ポート **9999**）でビーコンを 2 秒ごとに送信
-- クライアントはビーコンを受信すると自動的に Hub の IP を検出し接続を開始
+- Hub が UDP ブロードキャスト(ポート **9999**)で 2 秒ごとにビーコンを送信
+- クライアントはビーコンを受信したら自動で Hub に接続を開始
+- **6 秒間ビーコン未受信** → 「Hub 喪失」と判定 → 自動的に再探索状態へ復帰
+- **UDP 送信失敗** → ソケット再生成 + 指数バックオフ再接続(最大 5 秒間隔)
 
 ---
 
 ## 動作要件
 
-| プラットフォーム | バージョン要件 |
-| --- | --- |
-| Windows（Hub） | Windows 10 以降（x64） |
-| Windows（Client） | Windows 10 以降（x64） |
-| Android | API 24 (Android 7.0) 以降 |
-| iOS | iOS 14 以降 |
-| macOS | macOS 12 以降 |
-| Flutter SDK | 3.24 以降 |
-| Dart SDK | 3.5 以降 |
+| プラットフォーム | バージョン要件 | 備考 |
+| --- | --- | --- |
+| Windows(Hub) | Windows 10 以降(x64) | Visual Studio 2022 Build Tools |
+| Windows(Client) | Windows 10 以降(x64) | WASAPI loopback |
+| iOS | iOS 14 以降 | Broadcast Upload Extension が必要 |
+| iPadOS | iPadOS 14 以降 | Broadcast Upload Extension が必要 |
+| macOS | **macOS 13 以降**(ScreenCaptureKit 要件) | 画面録画許可が必要 |
+| Android | API 29(Android 10)以降 | MediaProjection 要件 |
+| Flutter SDK | 3.24 以降 | |
+| Dart SDK | 3.5 以降 | |
 
-**すべてのデバイスが同一 LAN（Wi-Fi / 有線）に接続している必要があります。**
+**全デバイスが同一 LAN(Wi-Fi / 有線)に接続している必要があります。**
 
 ---
 
@@ -79,101 +120,130 @@ cd local-audio-sync
 flutter pub get
 ```
 
-### 3. Android のビルド準備
+### 3. iOS / iPadOS の追加セットアップ
 
-`android/app/src/main/AndroidManifest.xml` に以下のパーミッションが設定済みです：
+iOS / iPadOS で他アプリの音を取るには、Xcode 上で **Broadcast Upload Extension ターゲット** を手動で追加する必要があります。詳細手順は別ドキュメントに記載しています。
 
-- `RECORD_AUDIO` — マイク使用
-- `FOREGROUND_SERVICE_MICROPHONE` — バックグラウンド録音
-- `CHANGE_WIFI_MULTICAST_STATE` — UDP ブロードキャスト受信
-- `WAKE_LOCK` — 画面 OFF 時の継続動作
+→ [docs/iOS_BROADCAST_SETUP.md](docs/iOS_BROADCAST_SETUP.md)
 
-### 4. iOS / macOS の署名設定
+### 4. macOS の追加セットアップ
 
-iOS でビルドする際は Xcode で開発者アカウントと Provisioning Profile を設定してください。
-`Info.plist` には以下が設定済みです：
+初回起動時に「画面録画」の許可ダイアログが OS から表示されます。許可してください。
 
-- `NSMicrophoneUsageDescription` — マイク使用理由の説明
-- `UIBackgroundModes: audio` — バックグラウンド音声処理
+```text
+システム設定 → プライバシーとセキュリティ → 画面録画 → local_audio_sync をオン
+```
 
-### 5. Windows のビルド準備（初回のみ）
+### 5. Windows のビルド準備(初回のみ)
 
-`windows/audio_mixer_plugin/` ディレクトリに `miniaudio.h` が含まれています。
-Visual Studio 2022 Build Tools（C++ ワークロード）が必要です。
+Visual Studio 2022 Build Tools(C++ ワークロード)が必要です。
 
-Visual Studio Build Tools がない場合はインストールしてください：
 <https://visualstudio.microsoft.com/ja/downloads/#build-tools-for-visual-studio-2022>
+
+### 6. Android の追加セットアップ
+
+設定済みの `AndroidManifest.xml` でパーミッションが宣言されています。初回起動時に「画面のキャストとオーディオの記録」許可ダイアログが出るので許可してください。
 
 ---
 
 ## 使い方
 
-### アプリの起動
+### 起動
 
 ```bash
 # Windows
 flutter run -d windows
 
-# Android（接続済みデバイス）
+# Android(USB 接続デバイス)
 flutter run -d android
 
-# iOS（接続済みデバイス）
+# iOS / iPadOS(USB 接続デバイス)
 flutter run -d ios
+
+# macOS
+flutter run -d macos
 ```
 
-### Hub（受信・再生側）の設定
+### Hub(集約・再生側)の使い方
 
-1. アプリを起動し、初期画面で **「Hub」** を選択
+1. アプリ起動 → 初期画面で **「Hub(集約・再生)」** を選択
 2. デバイス名を入力して **「Hub として起動」** をタップ
-3. Hub 画面に切り替わり、LAN へのビーコン送信が始まります
+3. Hub 画面に切り替わり、ビーコン送信が始まります
 4. クライアントが接続すると一覧に表示されます
-5. 各クライアントの音量スライダーで個別に音量を調整できます
+5. 各クライアントの **音量スライダー** / **ミュートボタン** で個別調整
 
-### Client（送信側）の設定
+### クライアント(送信側)の使い方
 
-1. アプリを起動し、初期画面で **「Client」** を選択
-2. デバイス名を入力して **「Client として起動」** をタップ
-3. Client 画面に切り替わり、LAN 上の Hub を自動検索します
-4. Hub が見つかると自動で接続してマイク音声の送信を開始します
-5. VU メーターで現在の入力レベルを確認できます
-6. **「Stop Broadcasting」** ボタンで送信を停止できます
+1. アプリ起動 → 初期画面で **「クライアント(送信)」** を選択
+2. デバイス名を入力して **「クライアントとして起動」** をタップ
+3. LAN 上の Hub を自動検索(ビーコン受信)
+4. Hub が見つかると自動接続
+5. **配信開始**:
+   - **iOS / iPadOS**: 画面の **「タップして配信開始」** ボタンをタップ → システムシートで「Local Audio Sync 配信」を選択 → **ブロードキャストを開始**
+   - **Android**: 画面のキャプチャ許可ダイアログが出るので許可
+   - **macOS**: 自動でキャプチャ開始(画面録画許可は事前に承認しておく)
+   - **Windows**: 自動でキャプチャ開始(デフォルト出力デバイスをループバック)
+6. 配信中は VU メーターが反応します
+7. 「Hub から切断」ボタンで停止
 
-### ロールの切り替え
+### 役割の切り替え
 
-画面右上の **「⇄」** アイコンをタップするとロール選択画面に戻ります。
-選択したロールは次回起動時も保持されます。
+画面右上の **「⇄」** アイコンで役割選択画面に戻ります。選択したロールは次回起動時も保持されます。
+
+---
+
+## プラットフォーム別の内部音声キャプチャ詳細
+
+| OS | 取得 API | 制約 |
+| --- | --- | --- |
+| **iOS / iPadOS** | Broadcast Upload Extension(ReplayKit) | DRM 不可、Extension メモリ 50MB、Picker UX 必須 |
+| **Android** | MediaProjection + AudioPlaybackCaptureConfiguration(API 29+) | DRM 不可、対象アプリが `allowAudioPlaybackCapture` 許可必須 |
+| **macOS** | ScreenCaptureKit + SCStream(macOS 13+) | 画面録画許可必須 |
+| **Windows** | WASAPI loopback(`audio_mixer_plugin.dll` 経由) | デフォルト出力デバイスから取得 |
+
+### iOS / iPadOS の詳細
+
+- メインアプリ ↔ Extension 間は App Group コンテナ内の **UNIX Domain Socket(SOCK_DGRAM)** で PCM を転送
+- Extension の 50MB メモリ制限を守るため、**エンコードや UDP 送信は Extension 側で行わず、メインアプリ側に集約**
+- Extension の bundle ID(既定:`com.example.localAudioSync.BroadcastExtension`)はメインアプリ側の `client_screen.dart` で参照しているので、Xcode で Bundle ID を変えた場合は `_broadcastExtensionBundleId` 定数も更新
+
+### Windows の詳細
+
+- `audio_mixer_plugin.dll` 内の loopback API を Dart から FFI で叩く
+- `loopback_start` → リングバッファに PCM16 を書き込み、Dart 側が 20ms 周期で polling
+- Hub と同居する 1 つの DLL なので、Windows では **Hub と Client 兼務が可能**
 
 ---
 
 ## 通信プロトコル詳細
 
-### ビーコン（UDP ブロードキャスト、ポート 9999）
+### ビーコン(UDP ブロードキャスト、ポート 9999)
 
-Hub が 2 秒ごとに `255.255.255.255` へ送信するテキストメッセージ：
+Hub が 2 秒ごとに `255.255.255.255` へ送信するテキスト:
 
 ```text
 LAHUB:{hubIPv4}:7777:{hubName}
 例: LAHUB:192.168.1.10:7777:MyHub
 ```
 
-### 音声パケット（UDP ユニキャスト、ポート 7777）
+クライアント側は **6 秒間** 受信が無いと「喪失」とみなして再探索に戻ります。
 
-バイナリ形式：
+### 音声パケット(UDP ユニキャスト、ポート 7777)
 
 | オフセット | サイズ | 内容 |
 | --- | --- | --- |
 | 0 | 2 byte | マジックバイト: `0xA1 0xA2` |
-| 2 | 2 byte | クライアント ID（uint16、ビッグエンディアン） |
-| 4 | 4 byte | シーケンス番号（uint32、ビッグエンディアン） |
-| 8 | 可変 | Opus ペイロード（20ms フレーム、約 80〜320 byte） |
+| 2 | 2 byte | クライアント ID(uint16、ビッグエンディアン) |
+| 4 | 4 byte | シーケンス番号(uint32、ビッグエンディアン) |
+| 8 | 可変 | Opus ペイロード(20ms フレーム、約 80〜320 byte) |
 
-### 制御メッセージ（テキスト、ポート 7777）
+### 制御メッセージ(テキスト、ポート 7777)
 
 | メッセージ | 方向 | 形式 | 説明 |
 | --- | --- | --- | --- |
 | HELLO | Client → Hub | `HELLO:{name}:{uuid}` | 接続開始 |
-| ACKHELLO | Hub → Client | `ACKHELLO:{assignedId}` | ID の割り当て通知 |
-| PING | Client → Hub | `PING:{clientId}` | 接続維持（5 秒ごと） |
+| ACKHELLO | Hub → Client | `ACKHELLO:{assignedId}` | ID 割り当て |
+| PING | Client → Hub | `PING:{clientId}` | 接続維持(5 秒ごと) |
 | BYE | Client → Hub | `BYE:{clientId}` | 切断通知 |
 
 ### 音声仕様
@@ -182,10 +252,10 @@ LAHUB:{hubIPv4}:7777:{hubName}
 | --- | --- |
 | コーデック | Opus |
 | サンプルレート | 48,000 Hz |
-| チャンネル | 2（ステレオ） |
+| チャンネル | 2(ステレオ) |
 | ビットレート | 128 kbps |
-| フレームサイズ | 20 ms（960 サンプル/チャンネル） |
-| ジッターバッファ | 固定遅延方式、最大 5 フレーム（100 ms） |
+| フレームサイズ | 20 ms(960 サンプル/チャンネル、3840 byte の PCM16) |
+| ジッターバッファ | 固定遅延方式 + **シーケンス乖離 100 フレーム以上で自動再同期** |
 
 ---
 
@@ -193,83 +263,95 @@ LAHUB:{hubIPv4}:7777:{hubName}
 
 ```text
 local-audio-sync/
+├── docs/
+│   ├── PLAN.md                       # リアーキテクチャ計画
+│   └── iOS_BROADCAST_SETUP.md        # iOS Extension の Xcode セットアップ手順
+│
 ├── lib/
-│   ├── main.dart                      # エントリポイント（Opus 初期化 + ProviderScope）
-│   ├── app.dart                       # GoRouter ルーティング定義
+│   ├── main.dart                     # エントリポイント(Opus 初期化 + ProviderScope)
+│   ├── app.dart                      # GoRouter ルーティング + ja_JP ロケール
 │   ├── models/
-│   │   ├── app_mode.dart              # enum AppMode { hub, client }
-│   │   ├── client_info.dart           # クライアント情報（IP / 音量 / VU レベル等）
-│   │   └── audio_packet.dart          # UDP パケットのシリアライズ / デシリアライズ
+│   │   ├── app_mode.dart             # enum AppMode { hub, client }
+│   │   ├── client_info.dart          # クライアント情報(IP / 音量 / 状態)
+│   │   └── audio_packet.dart         # UDP パケットのシリアライザ
 │   ├── providers/
-│   │   ├── app_mode_provider.dart     # ロール選択の状態（SharedPreferences で永続化）
-│   │   ├── hub_state_provider.dart    # 接続クライアント一覧 + 音量状態
+│   │   ├── app_mode_provider.dart    # ロール状態(SharedPreferences で永続化)
+│   │   ├── hub_state_provider.dart   # 接続クライアント一覧 + 音量
 │   │   └── client_state_provider.dart # 接続状態 / VU レベル
 │   ├── services/
-│   │   ├── discovery_service.dart     # UDP ビーコン送受信
-│   │   ├── audio_capture_service.dart # マイク PCM16 ストリーム取得
-│   │   ├── opus_encoder_service.dart  # PCM16 → Opus エンコード
-│   │   ├── opus_decoder_service.dart  # Opus → float32 PCM デコード（PLC 対応）
-│   │   ├── udp_sender_service.dart    # クライアント: 音声送信 + keepalive
-│   │   ├── udp_receiver_service.dart  # Hub: 音声受信・振り分け
-│   │   ├── audio_mixer_service.dart   # Hub: FFI 経由で Windows ミキサーを操作
-│   │   └── jitter_buffer.dart         # 順序制御付きジッターバッファ
+│   │   ├── pcm_constants.dart        # 48kHz/ステレオ/20ms 定数 + RMS 計算
+│   │   ├── pcm_chunker.dart          # 任意サイズ → 20ms フレーム整流
+│   │   ├── screen_audio_capture_service.dart # OS 別キャプチャの共通ファサード
+│   │   ├── windows_loopback_service.dart     # Windows WASAPI loopback FFI
+│   │   ├── opus_encoder_service.dart         # PCM16 → Opus
+│   │   ├── opus_decoder_service.dart         # Opus → float32 PCM(PLC 対応)
+│   │   ├── discovery_service.dart            # ビーコン送受信 + Hub 喪失検出
+│   │   ├── jitter_buffer.dart                # 順序復元 + 自動再同期
+│   │   ├── udp_sender_service.dart           # UDP 送信 + 自動再接続
+│   │   ├── udp_receiver_service.dart         # UDP 受信 + 自動再 bind
+│   │   └── audio_mixer_service.dart          # FFI(Windows ミキサー)
 │   ├── screens/
-│   │   ├── setup_screen.dart          # ロール選択 + デバイス名入力
-│   │   ├── hub_screen.dart            # クライアント一覧 + 音量スライダー
-│   │   └── client_screen.dart         # 接続状態 + VU メーター
+│   │   ├── setup_screen.dart         # ロール選択(日本語)
+│   │   ├── hub_screen.dart           # クライアント一覧(日本語)
+│   │   └── client_screen.dart        # 配信開始 UI(日本語)
 │   └── widgets/
-│       ├── client_tile.dart           # クライアント行ウィジェット
-│       ├── vu_meter.dart              # VU メーター（CustomPainter）
-│       └── connection_status_badge.dart # 接続状態バッジ
+│       ├── broadcast_picker_button.dart      # iOS の RPSystemBroadcastPickerView
+│       ├── client_tile.dart                  # 1 クライアントの行 UI
+│       ├── vu_meter.dart                     # VU メーター描画
+│       └── connection_status_badge.dart      # 接続状態バッジ
 │
-├── windows/
-│   ├── CMakeLists.txt                 # audio_mixer_plugin をサブディレクトリ追加
-│   └── audio_mixer_plugin/
-│       ├── CMakeLists.txt             # DLL ビルド設定
-│       ├── audio_mixer.h              # FFI 公開 API
-│       ├── audio_mixer.cpp            # miniaudio + SPSC リングバッファ実装
-│       └── miniaudio.h                # シングルヘッダ オーディオライブラリ
-│
-├── android/app/src/main/
-│   ├── AndroidManifest.xml            # パーミッション宣言
-│   └── kotlin/.../
-│       ├── MainActivity.kt            # MethodChannel でフォアグラウンドサービス制御
-│       └── AudioBroadcastService.kt   # バックグラウンド録音用フォアグラウンドサービス
-│
-├── ios/Runner/
-│   └── Info.plist                     # UIBackgroundModes, マイク使用説明
+├── ios/
+│   ├── Runner/
+│   │   ├── AppDelegate.swift                 # プラグイン登録のみに集約
+│   │   ├── AudioSessionManager.swift         # AVAudioSession 一元管理
+│   │   ├── BroadcastReceiverPlugin.swift     # UDS 受信 → EventChannel
+│   │   ├── BroadcastPickerView.swift         # RPSystemBroadcastPickerView を埋め込む PlatformView
+│   │   ├── Info.plist                        # 画面録画/ローカルネット の Usage Description
+│   │   └── Runner.entitlements               # App Group
+│   └── BroadcastExtension/                   # Xcode で別ターゲットとして手動追加(docs/iOS_BROADCAST_SETUP.md)
+│       ├── SampleHandler.swift               # PCM 変換 + UDS 送信
+│       ├── Info.plist
+│       └── BroadcastExtension.entitlements
 │
 ├── macos/Runner/
-│   ├── DebugProfile.entitlements      # マイク + ネットワーク権限
-│   └── Release.entitlements           # マイク + ネットワーク権限
+│   ├── ScreenCaptureKitPlugin.swift          # SCStream + capturesAudio
+│   ├── DebugProfile.entitlements
+│   └── Release.entitlements
 │
-├── test/                              # ユニットテスト（21 件）
+├── android/app/src/main/
+│   ├── AndroidManifest.xml                   # MediaProjection 関連パーミッション
+│   └── kotlin/.../
+│       ├── MainActivity.kt                   # MediaProjection + AudioPlaybackCapture
+│       └── AudioBroadcastService.kt          # フォアグラウンドサービス(日本語通知)
+│
+├── windows/audio_mixer_plugin/
+│   ├── audio_mixer.h / audio_mixer.cpp       # Hub ミキサー + Loopback API
+│   ├── miniaudio.h
+│   └── CMakeLists.txt
+│
+├── test/                                     # ユニットテスト(48 件)
 │   ├── models/audio_packet_test.dart
 │   ├── services/discovery_service_test.dart
-│   ├── services/jitter_buffer_test.dart
+│   ├── services/jitter_buffer_test.dart       # 再同期 5 件含む
+│   ├── services/pcm_chunker_test.dart         # 9 件
+│   ├── services/pcm_constants_test.dart       # 6 件
+│   ├── services/windows_loopback_service_test.dart # 4 件
 │   └── providers/hub_state_provider_test.dart
 │
-├── integration_test/
-│   └── hub_client_loopback_test.dart  # 結合テスト（スケルトン）
-│
-└── .github/workflows/
-    ├── ci.yml                         # lint + test（全ブランチ）
-    ├── build-android.yml              # APK ビルド
-    ├── build-windows.yml              # EXE ビルド
-    └── build-ios.yml                  # IPA ビルド（macOS runner）
+└── .github/workflows/                        # CI/CD
 ```
 
 ---
 
 ## ビルド方法
 
-### Windows（推奨: リリースビルド）
+### Windows
 
 ```bash
 flutter build windows --release
 # 出力: build/windows/x64/runner/Release/
 #   local_audio_sync.exe
-#   audio_mixer_plugin.dll   ← miniaudio ベースのオーディオミキサー
+#   audio_mixer_plugin.dll   ← miniaudio ベースのミキサー + WASAPI loopback
 #   flutter_windows.dll
 ```
 
@@ -280,7 +362,7 @@ flutter build apk --release
 # 出力: build/app/outputs/flutter-apk/app-release.apk
 ```
 
-### iOS（コードサイン不要のビルド確認）
+### iOS(コードサイン不要のビルド確認)
 
 ```bash
 flutter build ios --release --no-codesign
@@ -300,15 +382,20 @@ flutter build macos --release
 
 ```bash
 flutter test
-# 21 件すべてパス
+# 48 件すべてパス
 ```
 
-| テストファイル | 内容 |
-| --- | --- |
-| `audio_packet_test.dart` | バイナリシリアライズ、マジックバイト検証、シーケンスラップアラウンド |
-| `jitter_buffer_test.dart` | 順序制御、パケットロス時の PLC トリガー、古いシーケンスの棄却 |
-| `discovery_service_test.dart` | ビーコン文字列パース（正常系・異常系） |
-| `hub_state_provider_test.dart` | クライアント追加 / 削除 / 音量変更のステート遷移 |
+主要テスト群:
+
+| テストファイル | 件数 | 内容 |
+| --- | --- | --- |
+| `audio_packet_test.dart` | 6 | バイナリシリアライズ、シーケンスラップアラウンド |
+| `jitter_buffer_test.dart` | 10 | 順序復元、PLC、自動再同期、32bit ラップ |
+| `discovery_service_test.dart` | 9 | ビーコンパース、Hub 喪失タイムアウト |
+| `pcm_chunker_test.dart` | 9 | 任意サイズ入力の 20ms フレーム整流 |
+| `pcm_constants_test.dart` | 6 | RMS 計算、定数の一貫性 |
+| `windows_loopback_service_test.dart` | 4 | DLL ロード失敗時のフォールバック |
+| `hub_state_provider_test.dart` | 4 | クライアント追加 / 削除 / 音量 / ミュート |
 
 ### 静的解析
 
@@ -321,44 +408,46 @@ flutter analyze
 
 ## CI/CD
 
-GitHub Actions で以下のワークフローが設定されています：
+GitHub Actions で以下のワークフローを自動実行します:
 
 | ワークフロー | トリガー | 内容 |
 | --- | --- | --- |
 | `ci.yml` | 全ブランチの push / PR | `flutter analyze` + `flutter test --coverage` |
 | `build-android.yml` | `main` / `develop` push | APK ビルド → Artifacts |
-| `build-windows.yml` | `main` / `develop` push | EXE ビルド → Artifacts |
-| `build-ios.yml` | `main` / `develop` push | コンパイル確認ビルド（署名なし）→ Artifacts |
+| `build-windows.yml` | `main` / `develop` push | EXE + DLL ビルド → Artifacts |
+| `build-ios.yml` | `main` / `develop` push | コンパイル確認(署名なし) |
+| `build-macos.yml` | `main` / `develop` push | macOS 13+ runner で macOS アプリビルド |
 
-### iOS/iPadOS を実機でテストする方法
+### iOS / iPadOS を実機でテストする方法
 
-CI はコンパイル確認のみ行います。実機へのインストールは以下の方法を使ってください。
+CI はコンパイル確認のみ。実機インストールは以下:
 
-#### 方法 1 — Mac + USB（最も手軽、無料）
+#### 方法 1 — Mac + USB(無料)
 
-iPhone を USB で Mac に接続し、プロジェクトディレクトリで実行するだけです。
-Xcode が自動で開発証明書を作成します（7日間有効）。
+iPhone を Mac に USB 接続し、プロジェクトディレクトリで:
 
 ```bash
-flutter devices          # 接続デバイスを確認
+flutter devices
 flutter run -d <device-id>
 ```
 
-#### 方法 2 — AltStore / Sideloadly（Windows / Mac 対応、無料）
+Xcode が自動で開発証明書を作成します(7 日間有効、無料 Apple ID で OK)。
 
-CI の Artifacts からダウンロードしたビルドを、無料 Apple ID でサイドロードできます。
+#### 方法 2 — AltStore / Sideloadly(Windows / Mac、無料)
+
+CI の Artifacts からダウンロードした IPA を、無料 Apple ID でサイドロード可能:
 
 | ツール | OS | 特徴 |
 | --- | --- | --- |
-| [AltStore](https://altstore.io/) | Windows / Mac | PC と同一 Wi-Fi で自動再署名 |
-| [Sideloadly](https://sideloadly.io/) | Windows / Mac | USB 接続で簡単インストール |
+| [AltStore](https://altstore.io/) | Win/Mac | PC と同一 Wi-Fi で自動再署名 |
+| [Sideloadly](https://sideloadly.io/) | Win/Mac | USB 接続で簡単インストール |
 
-どちらも 7 日ごとに再署名が必要です（AltStore は自動更新できます）。
+7 日ごとに再署名が必要(AltStore は自動更新可)。
 
 ### ブランチ戦略
 
 ```text
-main       ← リリースブランチ（PR 必須、CI 必須）
+main       ← リリースブランチ(PR 必須、CI 必須)
 develop    ← 開発統合ブランチ
 feature/*  ← 機能開発
 fix/*      ← バグ修正
@@ -368,42 +457,47 @@ fix/*      ← バグ修正
 
 ## トラブルシューティング
 
-### Hub が見つからない（クライアント側）
+### Hub が見つからない(クライアント側)
 
-- Hub と Client が **同一 Wi-Fi** に接続されているか確認してください
-- Windows ファイアウォールで **UDP ポート 9999 および 7777** の受信を許可してください
+- Hub と Client が **同一 Wi-Fi** か確認
+- Windows ファイアウォールで UDP **9999** および **7777** の受信許可
   - コントロールパネル → Windows Defender ファイアウォール → 受信の規則 → 新しい規則
-- Android で UDP ブロードキャストが届かない場合、ルーターの **AP 分離（AP Isolation）** を無効にしてください
+- Android で UDP ブロードキャストが届かない場合、ルーターの **AP 分離(AP Isolation)** を無効化
+- 6 秒間ビーコンを受信できないと「喪失」と判定して自動的に再探索に戻ります
 
-### 音声が出ない（Hub 側）
+### iOS で「ブロードキャスト開始」を押しても音が来ない
 
-- Windows の既定の再生デバイスが正しく設定されているか確認してください
-- タスクマネージャーで `audio_mixer_plugin.dll` がロードされているか確認してください
-- Hub 画面のクライアント一覧でクライアントが接続済みになっているか確認してください
+- App Group の設定がメインアプリと Extension で一致しているか確認(`group.com.example.local_audio_sync`)
+- 一度アプリを完全にアンインストールしてから再インストール
+- DRM 保護コンテンツ(Apple Music / Netflix 等)は仕様上取得できません
+- 詳細は [docs/iOS_BROADCAST_SETUP.md のトラブルシューティング](docs/iOS_BROADCAST_SETUP.md#トラブルシューティング)参照
 
-### マイクの許可が得られない
+### macOS で音が取れない
 
-#### Android の場合
+- 「画面録画」許可が与えられているか:
+  - システム設定 → プライバシーとセキュリティ → 画面録画 → local_audio_sync をオン
+- macOS 13 未満では動作しません
 
-- 設定 → アプリ → local-audio-sync → 権限 → マイク → 許可
+### Windows で `loopback_start 失敗` エラー
 
-#### iOS の場合
+- デフォルト出力デバイスが正しく設定されているか確認(タスクバー右下のスピーカーアイコン)
+- 出力デバイスがビット深度や周波数を変えて拒否することがある場合は、デバイスのプロパティで「24bit / 48000Hz」設定にする
 
-- 設定 → プライバシーとセキュリティ → マイク → local-audio-sync → ON
+### 音声が出ない(Hub 側)
 
-#### macOS の場合
+- Windows の既定の **再生デバイス** が正しく設定されているか確認
+- タスクマネージャーで `audio_mixer_plugin.dll` がロードされているか確認
 
-- システム設定 → プライバシーとセキュリティ → マイク → local-audio-sync → ON
+### 配信が途中で止まる
 
-### Android でバックグラウンドに移ると音声が止まる
-
-- フォアグラウンドサービスの通知（「Broadcasting Audio」）が表示されているか確認
-- 端末のバッテリー最適化設定で local-audio-sync を **最適化しない** に設定してください
-  - 設定 → バッテリー → バッテリーの最適化 → local-audio-sync → 最適化しない
+- iOS でメインアプリを完全終了(スワイプで閉じる)すると配信も止まります。アプリは起動したままにしてください
+- Android でバッテリー最適化が有効だとバックグラウンドで停止することがあります:
+  - 設定 → アプリ → local-audio-sync → バッテリー → 最適化しない
 
 ### `flutter build windows` が失敗する
 
-Visual Studio Build Tools（C++ によるデスクトップ開発）が必要です。
+Visual Studio Build Tools(C++ ワークロード)が必要です。
+
 <https://visualstudio.microsoft.com/ja/downloads/#build-tools-for-visual-studio-2022>
 
 ---
@@ -414,15 +508,13 @@ Visual Studio Build Tools（C++ によるデスクトップ開発）が必要で
 | --- | --- | --- |
 | `flutter_riverpod` | ^2.6.1 | 状態管理 |
 | `go_router` | ^14.6.2 | 画面遷移 |
-| `record` | ^6.2.0 | マイク PCM ストリーム取得 |
-| `opus_dart` | ^3.0.1 | Opus エンコード / デコード（FFI） |
+| `opus_dart` | ^3.0.1 | Opus エンコード / デコード(FFI) |
 | `opus_flutter` | ^3.0.1 | Opus ライブラリのロード |
-| `permission_handler` | ^11.3.1 | マイク権限リクエスト |
-| `network_info_plus` | ^6.0.1 | ローカル IP アドレス取得 |
-| `uuid` | ^4.5.1 | クライアント UUID 生成 |
-| `shared_preferences` | ^2.3.3 | ロール選択の永続化 |
-| `ffi` | ^2.1.0 | C++ DLL へのメモリアクセス |
-| `miniaudio.h` | latest | Windows オーディオ出力（C シングルヘッダ） |
+| `network_info_plus` | ^6.0.1 | ローカル IP 取得 |
+| `uuid` | ^4.5.1 | クライアント UUID |
+| `shared_preferences` | ^2.3.3 | ロール永続化 |
+| `ffi` | ^2.1.0 | Windows DLL 呼び出し |
+| `miniaudio.h` | latest | Windows オーディオ出力 + WASAPI loopback |
 
 ---
 

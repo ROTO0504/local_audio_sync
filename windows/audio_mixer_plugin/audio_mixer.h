@@ -81,6 +81,63 @@ MIXER_API void mixer_remove_client(uint16_t clientId);
  */
 MIXER_API void mixer_destroy(void);
 
+// ===========================================================================
+// Loopback (system audio capture) API
+// ===========================================================================
+//
+// Hub と分離した送信側用途の WASAPI loopback ベースキャプチャ。
+// `loopback_start()` でデフォルト出力デバイスをループバックモードで開き、
+// 別スレッドで動く data_callback が PCM16 ステレオ 48 kHz のリングバッファに
+// 書き込む。Dart 側は `loopback_read_pcm16()` を polling して読み出す。
+
+#define LOOPBACK_RING_FRAMES 96000  // 2 seconds @ 48 kHz
+
+/**
+ * loopback_start
+ *
+ * Initializes a WASAPI loopback device on the default playback endpoint and
+ * begins streaming captured audio into an internal ring buffer in PCM16 stereo
+ * 48 kHz interleaved format.
+ *
+ * @return 0 on success, non-zero error code on failure.
+ *         (1: already started, 2: ma_device_init failed, 3: ma_device_start failed,
+ *          4: format conversion not possible)
+ */
+MIXER_API int loopback_start(void);
+
+/**
+ * loopback_stop
+ *
+ * Stops the loopback device and clears the ring buffer.
+ */
+MIXER_API void loopback_stop(void);
+
+/**
+ * loopback_read_pcm16
+ *
+ * Read up to `maxFrames` stereo frames (each = 4 bytes interleaved L,R PCM16)
+ * from the loopback ring buffer into the caller-provided buffer.
+ *
+ * @param buffer    Destination buffer of size at least maxFrames * 4 bytes.
+ * @param maxFrames Maximum number of stereo frames to read.
+ * @return Number of frames actually written. 0 if no data available.
+ */
+MIXER_API int loopback_read_pcm16(int16_t* buffer, int maxFrames);
+
+/**
+ * loopback_pending_frames
+ *
+ * Number of frames currently buffered (for diagnostics/UI).
+ */
+MIXER_API int loopback_pending_frames(void);
+
+/**
+ * loopback_is_running
+ *
+ * 1 if the loopback device is currently running, 0 otherwise.
+ */
+MIXER_API int loopback_is_running(void);
+
 #ifdef __cplusplus
 } // extern "C"
 #endif

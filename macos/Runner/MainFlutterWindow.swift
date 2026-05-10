@@ -10,6 +10,11 @@ class MainFlutterWindow: NSWindow {
 
     RegisterGeneratedPlugins(registry: flutterViewController)
 
+    // ScreenCaptureKit ベースの内部音声キャプチャプラグインを登録
+    ScreenCaptureKitPluginLoader.register(
+      with: flutterViewController.registrar(forPlugin: "ScreenCaptureKitPlugin")
+    )
+
     super.awakeFromNib()
   }
 }

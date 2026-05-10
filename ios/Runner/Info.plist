@@ -56,12 +56,14 @@
 	</array>
 
 	<!-- Privacy descriptions -->
-	<key>NSMicrophoneUsageDescription</key>
-	<string>Broadcasts your microphone audio to the local network hub.</string>
 	<key>NSScreenCaptureUsageDescription</key>
-	<string>画面の音声を録音してローカルネットワークのハブに送信します。</string>
+	<string>このデバイスで再生中の音声を取得し、ローカルネットワーク内のハブへ配信するために画面ブロードキャストを使用します。</string>
 	<key>NSLocalNetworkUsageDescription</key>
-	<string>Discovers and connects to the Local Audio Sync hub on your network.</string>
+	<string>同じ Wi-Fi 上の Local Audio Sync ハブを探し、音声データを送信するためにローカルネットワークへアクセスします。</string>
+	<key>NSBonjourServices</key>
+	<array>
+		<string>_local-audio-sync._udp</string>
+	</array>
 
 	<key>UILaunchStoryboardName</key>
 	<string>LaunchScreen</string>

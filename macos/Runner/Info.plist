@@ -28,5 +28,11 @@
 	<string>MainMenu</string>
 	<key>NSPrincipalClass</key>
 	<string>NSApplication</string>
+	<!-- ScreenCaptureKit 経由で他アプリの音声を取得するため -->
+	<key>NSScreenCaptureUsageDescription</key>
+	<string>このデバイスで再生中の音声を取得し、ローカルネットワーク内のハブへ配信するために画面キャプチャを使用します。</string>
+	<!-- LAN 上の Hub を探索するため -->
+	<key>NSLocalNetworkUsageDescription</key>
+	<string>同じ Wi-Fi 上の Local Audio Sync ハブを探し、音声データを送信するためにローカルネットワークへアクセスします。</string>
 </dict>
 </plist>

@@ -9,10 +9,10 @@ class ConnectionStatusBadge extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final (label, color) = switch (status) {
-      ClientConnectionStatus.searching => ('Searching...', Colors.orange),
-      ClientConnectionStatus.connecting => ('Connecting...', Colors.blue),
-      ClientConnectionStatus.connected => ('Connected', Colors.green),
-      ClientConnectionStatus.disconnected => ('Disconnected', Colors.red),
+      ClientConnectionStatus.searching => ('検索中...', Colors.orange),
+      ClientConnectionStatus.connecting => ('接続中...', Colors.blue),
+      ClientConnectionStatus.connected => ('接続済み', Colors.green),
+      ClientConnectionStatus.disconnected => ('切断', Colors.red),
     };
     return Chip(
       avatar: CircleAvatar(

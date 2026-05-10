@@ -208,4 +208,147 @@ void mixer_destroy(void) {
     g_deviceInitialized = false;
 }
 
+// ===========================================================================
+// Loopback (WASAPI loopback) implementation
+// ===========================================================================
+
+namespace loopback {
+
+// Float→Int16 変換用クランプ
+static inline int16_t to_int16(float v) {
+    if (v > 1.0f) v = 1.0f;
+    else if (v < -1.0f) v = -1.0f;
+    return static_cast<int16_t>(v * 32767.0f);
+}
+
+static constexpr size_t kRingFrames   = LOOPBACK_RING_FRAMES;
+static constexpr size_t kRingSamples  = kRingFrames * kChannels;
+
+// SPSC リングバッファ(PCM16 ステレオ)。
+struct LoopbackRing {
+    std::array<int16_t, kRingSamples> buf{};
+    std::atomic<size_t> writeHead{0};
+    std::atomic<size_t> readHead{0};
+
+    size_t availableRead() const {
+        size_t w = writeHead.load(std::memory_order_acquire);
+        size_t r = readHead.load(std::memory_order_relaxed);
+        return (w - r + kRingSamples) % kRingSamples;
+    }
+    size_t availableWrite() const {
+        size_t avail_read = availableRead();
+        if (avail_read >= kRingSamples - 1) return 0;
+        return (kRingSamples - 1) - avail_read;
+    }
+};
+
+static LoopbackRing g_ring;
+static ma_device    g_loopDevice;
+static bool         g_loopInitialized = false;
+static std::atomic<bool> g_loopRunning{false};
+
+// miniaudio の loopback コールバック。Float32 ステレオで来る前提で書く。
+static void loopback_data_callback(
+    ma_device*  pDevice,
+    void*       pOutput,
+    const void* pInput,
+    ma_uint32   frameCount)
+{
+    (void)pDevice;
+    (void)pOutput;
+    if (pInput == nullptr || frameCount == 0) return;
+
+    const float* in = static_cast<const float*>(pInput);
+    const size_t totalSamples = static_cast<size_t>(frameCount) * kChannels;
+
+    size_t available = g_ring.availableWrite();
+    size_t toWrite = std::min(available, totalSamples);
+
+    size_t w = g_ring.writeHead.load(std::memory_order_relaxed);
+    for (size_t i = 0; i < toWrite; ++i) {
+        g_ring.buf[w % kRingSamples] = to_int16(in[i]);
+        ++w;
+    }
+    g_ring.writeHead.store(w % kRingSamples, std::memory_order_release);
+    // オーバーフロー分は黙って捨てる(送信側 pacing が壊れているとき以外発生しない)
+}
+
+} // namespace loopback
+
+int loopback_start(void) {
+    using namespace loopback;
+    if (g_loopRunning.load()) return 1;
+
+    ma_device_config config = ma_device_config_init(ma_device_type_loopback);
+    config.capture.pDeviceID = nullptr;          // デフォルト出力デバイスをループバック
+    config.capture.format    = ma_format_f32;    // miniaudio の loopback はネイティブで f32
+    config.capture.channels  = kChannels;        // ステレオに揃える(SRC は miniaudio 任せ)
+    config.sampleRate        = kSampleRate;      // 48 kHz
+    config.dataCallback      = loopback_data_callback;
+    config.pUserData         = nullptr;
+
+    if (ma_device_init(nullptr, &config, &g_loopDevice) != MA_SUCCESS) {
+        return 2;
+    }
+    g_loopInitialized = true;
+
+    // バッファをクリア
+    g_ring.writeHead.store(0);
+    g_ring.readHead.store(0);
+
+    if (ma_device_start(&g_loopDevice) != MA_SUCCESS) {
+        ma_device_uninit(&g_loopDevice);
+        g_loopInitialized = false;
+        return 3;
+    }
+    g_loopRunning.store(true);
+    return 0;
+}
+
+void loopback_stop(void) {
+    using namespace loopback;
+    if (!g_loopRunning.load() && !g_loopInitialized) return;
+
+    if (g_loopInitialized) {
+        ma_device_stop(&g_loopDevice);
+        ma_device_uninit(&g_loopDevice);
+        g_loopInitialized = false;
+    }
+    g_loopRunning.store(false);
+
+    // バッファクリア
+    g_ring.buf.fill(0);
+    g_ring.writeHead.store(0);
+    g_ring.readHead.store(0);
+}
+
+int loopback_read_pcm16(int16_t* buffer, int maxFrames) {
+    using namespace loopback;
+    if (buffer == nullptr || maxFrames <= 0) return 0;
+
+    const size_t requestedSamples =
+        static_cast<size_t>(maxFrames) * kChannels;
+    const size_t availableSamples = g_ring.availableRead();
+    const size_t toRead = std::min(requestedSamples, availableSamples);
+
+    size_t r = g_ring.readHead.load(std::memory_order_relaxed);
+    for (size_t i = 0; i < toRead; ++i) {
+        buffer[i] = g_ring.buf[r % kRingSamples];
+        ++r;
+    }
+    g_ring.readHead.store(r % kRingSamples, std::memory_order_release);
+
+    return static_cast<int>(toRead / kChannels);
+}
+
+int loopback_pending_frames(void) {
+    using namespace loopback;
+    return static_cast<int>(g_ring.availableRead() / kChannels);
+}
+
+int loopback_is_running(void) {
+    using namespace loopback;
+    return g_loopRunning.load() ? 1 : 0;
+}
+
 } // extern "C"

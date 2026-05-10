@@ -150,6 +150,7 @@ class _HubScreenState extends ConsumerState<HubScreen> {
         actions: [
           IconButton(
             icon: const Icon(Icons.settings),
+            tooltip: '設定',
             onPressed: _showSettings,
           ),
         ],
@@ -161,7 +162,7 @@ class _HubScreenState extends ConsumerState<HubScreen> {
                 Padding(
                   padding: const EdgeInsets.all(12),
                   child: Text(
-                    '${clients.length} client(s) connected',
+                    '${clients.length} 台のクライアントが接続中',
                     style: const TextStyle(color: Colors.grey, fontSize: 13),
                   ),
                 ),
@@ -175,13 +176,13 @@ class _HubScreenState extends ConsumerState<HubScreen> {
     showDialog<void>(
       context: context,
       builder: (_) => AlertDialog(
-        title: const Text('Hub Settings'),
+        title: const Text('Hub 設定'),
         content: Column(
           mainAxisSize: MainAxisSize.min,
           children: [
             ListTile(
               leading: const Icon(Icons.volume_up),
-              title: const Text('Set all volumes to 100%'),
+              title: const Text('すべての音量を 100% にする'),
               onTap: () {
                 ref.read(hubStateProvider.notifier).setMasterVolumeAll(1.0);
                 Navigator.of(context).pop();
@@ -189,7 +190,7 @@ class _HubScreenState extends ConsumerState<HubScreen> {
             ),
             ListTile(
               leading: const Icon(Icons.volume_mute),
-              title: const Text('Mute all'),
+              title: const Text('すべてミュート'),
               onTap: () {
                 final clients = ref.read(hubStateProvider);
                 for (final id in clients.keys) {
@@ -200,7 +201,7 @@ class _HubScreenState extends ConsumerState<HubScreen> {
             ),
             ListTile(
               leading: const Icon(Icons.swap_horiz),
-              title: const Text('Switch to Client mode'),
+              title: const Text('クライアントモードへ切替'),
               onTap: () async {
                 Navigator.of(context).pop();
                 await ref.read(appModeProvider.notifier).reset();
@@ -212,7 +213,7 @@ class _HubScreenState extends ConsumerState<HubScreen> {
         actions: [
           TextButton(
             onPressed: () => Navigator.of(context).pop(),
-            child: const Text('Close'),
+            child: const Text('閉じる'),
           ),
         ],
       ),
@@ -232,12 +233,12 @@ class _EmptyState extends StatelessWidget {
           Icon(Icons.wifi_find, size: 64, color: Colors.grey.shade400),
           const SizedBox(height: 16),
           Text(
-            'Waiting for clients...',
+            'クライアントを待っています...',
             style: TextStyle(fontSize: 18, color: Colors.grey.shade600),
           ),
           const SizedBox(height: 8),
           Text(
-            'Open the app on another device and select Client mode',
+            '他のデバイスでアプリを起動し、「クライアント」を選択してください',
             style: TextStyle(fontSize: 13, color: Colors.grey.shade500),
             textAlign: TextAlign.center,
           ),
