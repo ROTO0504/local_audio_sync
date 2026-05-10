@@ -4,9 +4,12 @@
 <dict>
 	<key>com.apple.security.app-sandbox</key>
 	<true/>
+	<key>com.apple.security.network.server</key>
+	<true/>
 	<key>com.apple.security.network.client</key>
 	<true/>
-	<key>com.apple.security.device.microphone</key>
+	<!-- ScreenCaptureKit を使うために必要(画面録画とともにシステム音声を取得) -->
+	<key>com.apple.security.screen-recording</key>
 	<true/>
 </dict>
 </plist>
