@@ -1,10 +1,9 @@
 name: Build iOS / iPadOS
 
+# 課金枠を抑えるため、iOS は macOS runner(1分=10分カウント)で動くため
+# 手動トリガのみ。リリース前など必要なタイミングで実行する。
 on:
-  push:
-    branches:
-      - main
-      - develop
+  workflow_dispatch:
 
 env:
   FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
