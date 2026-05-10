@@ -18,7 +18,7 @@ jobs:
 
     steps:
       - name: Checkout repository
-        uses: actions/checkout@v4
+        uses: actions/checkout@v5
 
       - name: Set up Flutter
         uses: subosito/flutter-action@v2
@@ -78,7 +78,7 @@ jobs:
           Get-ChildItem $bundle -Recurse | Select-Object FullName | Format-Table -AutoSize
 
       - name: Upload Windows artifact
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v5
         with:
           name: windows-bundle
           # Flutter Windows の正しいバンドル位置。
