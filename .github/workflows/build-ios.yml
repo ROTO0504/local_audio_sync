@@ -9,12 +9,17 @@ env:
   FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
 
 # 注意:
-# このワークフローは Runner ターゲットの "コンパイル確認" のみを行います。
+# このワークフローは Runner ターゲットのみを未署名でビルドします。
 # Broadcast Upload Extension(ios/BroadcastExtension/)は Xcode 上で
 # 別ターゲットとして手動追加する前提のため、CI のデフォルトビルドには
-# 含まれません(pbxproj に登録されていないため)。
-# 詳細は docs/iOS_BROADCAST_SETUP.md を参照してください。
-# 実機テストは AltStore / Sideloadly / Mac + USB のいずれかで行ってください。
+# 含まれません(pbxproj に登録されていないため、内部音声キャプチャ機能は
+# このワークフロー成果物では動きません)。
+# 内部音声キャプチャが必要な場合は docs/iOS_BROADCAST_SETUP.md の手順で
+# Xcode 側で Extension ターゲットを追加してから、Mac でビルドしてください。
+#
+# 出力アーティファクトは以下 2 種類:
+#   - ios-app-bundle: build/ios/iphoneos/ 配下の Runner.app(zip 圧縮)
+#   - ios-unsigned-ipa: AltStore / Sideloadly でサイドロードできる未署名 IPA
 jobs:
   build-ios:
     runs-on: macos-14
@@ -35,8 +40,39 @@ jobs:
       - name: Build iOS (release, no codesign)
         run: flutter build ios --release --no-codesign
 
-      - name: Upload iOS build artifact
+      # 未署名 IPA の作成。
+      # Apple の IPA は単に `Payload/<App>.app` を含む zip。
+      # AltStore / Sideloadly はこの未署名 IPA を読み込んで、ユーザーの
+      # 無料 Apple ID で再署名 → 7 日間 iPhone にサイドロード可能。
+      - name: Create unsigned IPA (for AltStore / Sideloadly)
+        run: |
+          set -e
+          APP_PATH="build/ios/iphoneos/Runner.app"
+          if [ ! -d "$APP_PATH" ]; then
+            echo "::error::Runner.app が見つかりません: $APP_PATH"
+            ls -la build/ios/iphoneos/ || true
+            exit 1
+          fi
+
+          # IPA 構造: Payload/Runner.app
+          IPA_DIR="$(mktemp -d)"
+          mkdir -p "$IPA_DIR/Payload"
+          cp -R "$APP_PATH" "$IPA_DIR/Payload/"
+
+          OUT="build/ios/local_audio_sync-unsigned.ipa"
+          (cd "$IPA_DIR" && zip -qry "$OLDPWD/$OUT" Payload)
+
+          ls -la "$OUT"
+          echo "Built unsigned IPA: $OUT"
+
+      - name: Upload .app bundle artifact
         uses: actions/upload-artifact@v5
         with:
-          name: ios-build
+          name: ios-app-bundle
           path: build/ios/iphoneos/
+
+      - name: Upload unsigned IPA artifact
+        uses: actions/upload-artifact@v5
+        with:
+          name: ios-unsigned-ipa
+          path: build/ios/local_audio_sync-unsigned.ipa
