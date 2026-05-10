@@ -35,39 +35,22 @@ jobs:
           (Get-Content $f) | Where-Object { $_ -notmatch 'opus_flutter_windows' } | Set-Content $f
           Write-Host "Patched $f"
 
-      # 1 回目: cmake configure + ALL_BUILD + INSTALL を走らせる。
-      # クリーン環境では INSTALL タスクの post-build イベントが exit 1 で
-      # 落ちることがあるが、その時点で大半の DLL ビルドは完了している。
-      - name: Build (1st pass — INSTALL stage may fail)
-        shell: pwsh
-        continue-on-error: true
-        run: flutter build windows --release
-
-      # 2 回目: 1 回目で残ったプラグイン DLL をビルドし切り、INSTALL も完走させる。
-      # キャッシュが効くので失敗するべき要因は無い。ここで失敗したら本物のエラー。
-      - name: Build (2nd pass — must succeed)
-        shell: pwsh
-        run: flutter build windows --release
-
-      # 念押しで cmake --build --target install を呼び、
-      # 万一抜け落ちている依存物があれば確実にコピーする。
-      # `--install` ではなく `--build --target install` にすることで、
-      # 必要なら ALL_BUILD も自動で走る。
-      - name: Run CMake build+install (final safety net)
+      # CMake の初回 INSTALL タスクが post-build イベントで稀に exit 1 を返すが、
+      # その時点で大半のビルドは完了しているため `cmake --build --target install`
+      # を呼ぶだけで残りの DLL が短時間でコピーされ、バンドルが完成する。
+      # `--install` ではなく `--build --target install` を使うことで、必要なら
+      # ALL_BUILD も自動で走り、欠落しているプラグイン DLL が補完される。
+      - name: Build Windows release bundle
         shell: pwsh
         run: |
-          $cmake = (Get-ChildItem `
-            "C:\Program Files (x86)\Microsoft Visual Studio\2022\BuildTools\Common7\IDE\CommonExtensions\Microsoft\CMake\CMake\bin\cmake.exe", `
-            "C:\Program Files\Microsoft Visual Studio\2022\Enterprise\Common7\IDE\CommonExtensions\Microsoft\CMake\CMake\bin\cmake.exe", `
-            "C:\Program Files\Microsoft Visual Studio\2025\Enterprise\Common7\IDE\CommonExtensions\Microsoft\CMake\CMake\bin\cmake.exe", `
-            "C:\Program Files\CMake\bin\cmake.exe" `
-            -ErrorAction SilentlyContinue | Select-Object -First 1).FullName
-          if (-not $cmake) {
-            $cmake = (Get-Command cmake -ErrorAction SilentlyContinue).Source
+          flutter build windows --release
+          if ($LASTEXITCODE -ne 0) {
+            Write-Host "::warning::flutter build returned exit $LASTEXITCODE; finalizing bundle with cmake."
+            cmake --build build/windows/x64 --config Release --target install
+            if ($LASTEXITCODE -ne 0) {
+              throw "Windows build failed: cmake fallback also returned $LASTEXITCODE"
+            }
           }
-          if (-not $cmake) { $cmake = "cmake" }
-          Write-Host "Using cmake at: $cmake"
-          & $cmake --build build/windows/x64 --config Release --target install
 
       - name: Verify bundle contents
         shell: pwsh
@@ -77,7 +60,7 @@ jobs:
           if (Test-Path $bundle) {
             Get-ChildItem $bundle -Recurse | Select-Object FullName, Length | Format-Table -AutoSize
           } else {
-            Write-Host "(bundle directory does not exist)"
+            throw "バンドルディレクトリ $bundle が存在しません"
           }
 
           $missing = @()
