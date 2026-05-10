@@ -4,7 +4,6 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
-import 'package:uuid/uuid.dart';
 import '../providers/app_mode_provider.dart';
 import '../providers/client_state_provider.dart';
 import '../services/discovery_service.dart';
@@ -36,7 +35,6 @@ class _ClientScreenState extends ConsumerState<ClientScreen> {
   final ScreenAudioCaptureService _capture = ScreenAudioCaptureService();
   final OpusEncoderService _encoder = OpusEncoderService();
   final UdpSenderService _sender = UdpSenderService();
-  final _uuid = const Uuid().v4();
 
   StreamSubscription? _discoverySub;
   StreamSubscription? _hubLostSub;
@@ -99,8 +97,9 @@ class _ClientScreenState extends ConsumerState<ClientScreen> {
 
     try {
       final name = ref.read(deviceNameProvider);
-      await _sender.connect(hub.ip, hub.port, name, _uuid);
-      ref.read(clientStateProvider.notifier).setConnected(_uuid);
+      final uuid = ref.read(clientUuidProvider);
+      await _sender.connect(hub.ip, hub.port, name, uuid);
+      ref.read(clientStateProvider.notifier).setConnected(uuid);
 
       // iOS 以外は接続後に直ちにキャプチャ起動。
       // iOS は initState で起動済み(Extension からの PCM 待ち)。

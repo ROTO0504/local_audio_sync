@@ -44,16 +44,16 @@ void main() {
       expect(level, greaterThan(0.99));
     });
 
-    test('半分の振幅は約 0.25(RMS なので二乗平均)', () {
+    test('半分の振幅(0.5)は真の RMS で約 0.5', () {
       final samples = Int16List(64);
       for (int i = 0; i < samples.length; i++) {
-        samples[i] = 16384; // ≈ 32768/2
+        samples[i] = 16384; // ≈ 32768/2 → 振幅 0.5
       }
       final pcm = samples.buffer.asUint8List();
       final level = computePcm16RmsLevel(pcm);
-      // (0.5)^2 = 0.25 付近
-      expect(level, greaterThan(0.24));
-      expect(level, lessThan(0.26));
+      // 全サンプル一定値 0.5 → sqrt(mean(0.25)) = 0.5
+      expect(level, greaterThan(0.49));
+      expect(level, lessThan(0.51));
     });
   });
 }

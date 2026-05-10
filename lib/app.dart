@@ -25,7 +25,9 @@ class _LocalAudioSyncAppState extends ConsumerState<LocalAudioSyncApp> {
   }
 
   Future<void> _init() async {
-    // Restore persisted settings before routing
+    // Restore persisted settings before routing.
+    // UUID は Client 接続時のキーになるので、Discovery より先に確定させる。
+    await ref.read(clientUuidProvider.notifier).restoreOrCreate();
     await ref.read(deviceNameProvider.notifier).restoreName();
     final mode = await ref.read(appModeProvider.notifier).restoreMode();
     _router = _buildRouter(mode);

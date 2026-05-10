@@ -73,6 +73,16 @@ class MainActivity : FlutterActivity() {
                             return@setMethodCallHandler
                         }
                         pendingResult = result
+
+                        // Android 14 (API 34) 以降の制約:
+                        // MediaProjectionManager.getMediaProjection() を呼ぶ前に、
+                        // FOREGROUND_SERVICE_TYPE_MEDIA_PROJECTION を持つ
+                        // フォアグラウンドサービスが起動済みでなければ
+                        // SecurityException で落ちる。
+                        // そのため同意ダイアログを出す前にサービスを起動しておく。
+                        // ユーザーがキャンセルした場合は onActivityResult で停止する。
+                        startBroadcastForegroundService()
+
                         val mpm = getSystemService(MEDIA_PROJECTION_SERVICE)
                                 as MediaProjectionManager
                         startActivityForResult(
@@ -85,15 +95,8 @@ class MainActivity : FlutterActivity() {
                         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
                             startScreenAudioCapture()
                         }
-                        // Also start the foreground service so audio keeps running in background
-                        val intent = Intent(this, AudioBroadcastService::class.java).apply {
-                            action = AudioBroadcastService.ACTION_START
-                        }
-                        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
-                            startForegroundService(intent)
-                        } else {
-                            startService(intent)
-                        }
+                        // requestMediaProjection の段階で既にサービスは起動済み
+                        // (Android 14 制約)。startScreenCapture では何もしない。
                         result.success(null)
                     }
                     "stopScreenCapture" -> {
@@ -118,10 +121,32 @@ class MainActivity : FlutterActivity() {
                 mediaProjection = mpm.getMediaProjection(resultCode, data)
                 pendingResult?.success(true)
             } else {
+                // ユーザーが同意ダイアログをキャンセル/拒否した場合は、
+                // requestMediaProjection で先行起動したフォアグラウンドサービスを
+                // 停止する(残しておくと通知が出っぱなしになる)。
+                stopBroadcastForegroundService()
                 pendingResult?.success(false)
             }
             pendingResult = null
         }
+    }
+
+    private fun startBroadcastForegroundService() {
+        val intent = Intent(this, AudioBroadcastService::class.java).apply {
+            action = AudioBroadcastService.ACTION_START
+        }
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+            startForegroundService(intent)
+        } else {
+            startService(intent)
+        }
+    }
+
+    private fun stopBroadcastForegroundService() {
+        val intent = Intent(this, AudioBroadcastService::class.java).apply {
+            action = AudioBroadcastService.ACTION_STOP
+        }
+        startService(intent)
     }
 
     @RequiresApi(Build.VERSION_CODES.Q)

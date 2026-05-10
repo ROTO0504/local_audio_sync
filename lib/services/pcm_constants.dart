@@ -5,6 +5,7 @@
 /// 揃えるための統一値。
 library;
 
+import 'dart:math' as math;
 import 'dart:typed_data';
 
 /// サンプリングレート(Hz)。
@@ -22,6 +23,11 @@ const int kBytesPerChunk = kFramesPerChunk * kChannels * 2;
 
 /// PCM16 バイト列から RMS レベル(0.0〜1.0)を計算する。
 /// VU メーター描画に使う。サンプル数が 0 の場合は 0.0 を返す。
+///
+/// 旧実装は `sumSq / N` の二乗平均(分散)を返しており、
+/// 振幅 0.5 の信号で 0.25 にしかならなかった。これだと音楽信号(平均振幅
+/// 0.2 前後)で 0.04 ≒ 4% 表示となり、ユーザーの「VU が 5% しか動かない」
+/// 報告につながっていた。本実装では平方根を取って真の RMS を返す。
 double computePcm16RmsLevel(Uint8List pcm16) {
   if (pcm16.isEmpty) return 0.0;
   final samples = pcm16.buffer.asInt16List(
@@ -35,6 +41,6 @@ double computePcm16RmsLevel(Uint8List pcm16) {
     sumSq += n * n;
   }
   final mean = sumSq / samples.length;
-  if (mean.isNaN || mean.isInfinite) return 0.0;
-  return mean.clamp(0.0, 1.0).toDouble();
+  if (mean.isNaN || mean.isInfinite || mean <= 0) return 0.0;
+  return math.sqrt(mean).clamp(0.0, 1.0).toDouble();
 }
