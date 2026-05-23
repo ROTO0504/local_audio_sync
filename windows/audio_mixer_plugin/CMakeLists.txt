@@ -66,10 +66,33 @@ target_link_libraries(audio_mixer_plugin PRIVATE
 )
 
 # ---------------------------------------------------------------------------
+# DLL の出力先を Runner の実行ディレクトリと一致させる。
+#
+# Flutter Windows のテンプレートは install() で Release バンドル
+# (build/windows/Release/) に DLL をコピーする設計だが、`flutter run`
+# のデバッグ実行は build/windows/x64/runner/Debug/ から exe を起動するため、
+# install では DLL が間に合わず "log reader stopped" でクラッシュしていた。
+# ビルド直後から Runner と同じディレクトリに DLL が並ぶよう、
+# RUNTIME_OUTPUT_DIRECTORY を構成ごとに上書きする。
+# ---------------------------------------------------------------------------
+set_target_properties(audio_mixer_plugin PROPERTIES
+    RUNTIME_OUTPUT_DIRECTORY_DEBUG   "${CMAKE_BINARY_DIR}/runner/Debug"
+    RUNTIME_OUTPUT_DIRECTORY_PROFILE "${CMAKE_BINARY_DIR}/runner/Profile"
+    RUNTIME_OUTPUT_DIRECTORY_RELEASE "${CMAKE_BINARY_DIR}/runner/Release"
+)
+
+# ---------------------------------------------------------------------------
 # Install the DLL next to the Flutter runner executable so that it can be
-# found at runtime without modifying PATH.
+# found at runtime without modifying PATH. install() は flutter build の
+# Release バンドル(build/windows/Release/)用で、こちらは配布用の最終配置。
+#
+# DESTINATION は必ず "." (相対パス) を使うこと。"${CMAKE_INSTALL_PREFIX}" を
+# 絶対指定すると、add_subdirectory が親 CMakeLists.txt より先に評価され、
+# まだデフォルトの "C:/Program Files/<project>" が焼き込まれてしまう。
+# その結果 INSTALL.vcxproj が「権限がない」と止まり、Release バンドルが
+# 半完成のまま flutter run がクラッシュしていた。
 # ---------------------------------------------------------------------------
 install(TARGETS audio_mixer_plugin
-    RUNTIME DESTINATION "${CMAKE_INSTALL_PREFIX}"
+    RUNTIME DESTINATION "."
     COMPONENT Runtime
 )

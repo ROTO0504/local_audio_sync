@@ -38,3 +38,24 @@ target_include_directories(${BINARY_NAME} PRIVATE "${CMAKE_SOURCE_DIR}")
 
 # Run the Flutter tool portions of the build. This must not be removed.
 add_dependencies(${BINARY_NAME} flutter_assemble)
+
+# ---------------------------------------------------------------------------
+# `flutter run` のデバッグ実行は build/windows/x64/runner/<Config>/ から exe を
+# 起動するため、その隣に flutter_windows.dll と flutter_assets を post-build で
+# コピーする。これがないと "log reader stopped" で即クラッシュする。
+# 公式の install() は build/windows/Release/ にしか配置しないので別途必要。
+# ---------------------------------------------------------------------------
+add_custom_command(TARGET ${BINARY_NAME} POST_BUILD
+  COMMAND ${CMAKE_COMMAND} -E copy_if_different
+    "${CMAKE_SOURCE_DIR}/flutter/ephemeral/flutter_windows.dll"
+    "$<TARGET_FILE_DIR:${BINARY_NAME}>/flutter_windows.dll"
+  COMMAND ${CMAKE_COMMAND} -E copy_if_different
+    "${CMAKE_SOURCE_DIR}/flutter/ephemeral/icudtl.dat"
+    "$<TARGET_FILE_DIR:${BINARY_NAME}>/data/icudtl.dat"
+  COMMAND ${CMAKE_COMMAND} -E rm -rf
+    "$<TARGET_FILE_DIR:${BINARY_NAME}>/data/flutter_assets"
+  COMMAND ${CMAKE_COMMAND} -E copy_directory
+    "${PROJECT_BUILD_DIR}/flutter_assets"
+    "$<TARGET_FILE_DIR:${BINARY_NAME}>/data/flutter_assets"
+  VERBATIM
+)
