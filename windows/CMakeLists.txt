@@ -10,6 +10,13 @@ set(BINARY_NAME "local_audio_sync")
 # versions of CMake.
 cmake_policy(VERSION 3.14...3.25)
 
+# CMake 3.31 以降の install() DESTINATION パス正規化警告(CMP0177)を抑止する。
+# Flutter Windows テンプレートが相対パスで install() を呼ぶため警告が大量に出るが、
+# NEW 挙動でも実害はないので明示的に新挙動を選ぶ。
+if(POLICY CMP0177)
+  cmake_policy(SET CMP0177 NEW)
+endif()
+
 # Define build configuration option.
 get_property(IS_MULTICONFIG GLOBAL PROPERTY GENERATOR_IS_MULTI_CONFIG)
 if(IS_MULTICONFIG)

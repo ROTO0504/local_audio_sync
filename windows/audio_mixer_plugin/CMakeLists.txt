@@ -1,6 +1,11 @@
 cmake_minimum_required(VERSION 3.14)
 project(audio_mixer_plugin)
 
+# CMake 3.31+ の install() DESTINATION 正規化警告を抑止。
+if(POLICY CMP0177)
+  cmake_policy(SET CMP0177 NEW)
+endif()
+
 # ---------------------------------------------------------------------------
 # Require C++17 globally for this sub-project.
 # ---------------------------------------------------------------------------
