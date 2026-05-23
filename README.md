@@ -329,13 +329,14 @@ local-audio-sync/
 │   ├── miniaudio.h
 │   └── CMakeLists.txt
 │
-├── test/                                     # ユニットテスト(48 件)
+├── test/                                     # ユニットテスト(54 件)
 │   ├── models/audio_packet_test.dart
 │   ├── services/discovery_service_test.dart
 │   ├── services/jitter_buffer_test.dart       # 再同期 5 件含む
 │   ├── services/pcm_chunker_test.dart         # 9 件
 │   ├── services/pcm_constants_test.dart       # 6 件
 │   ├── services/windows_loopback_service_test.dart # 4 件
+│   ├── services/udp_sender_service_test.dart  # 接続 / RESYNC / disconnect 6 件
 │   └── providers/hub_state_provider_test.dart
 │
 └── .github/workflows/                        # CI/CD
@@ -382,7 +383,7 @@ flutter build macos --release
 
 ```bash
 flutter test
-# 48 件すべてパス
+# 54 件すべてパス
 ```
 
 主要テスト群:
@@ -395,6 +396,7 @@ flutter test
 | `pcm_chunker_test.dart` | 9 | 任意サイズ入力の 20ms フレーム整流 |
 | `pcm_constants_test.dart` | 6 | RMS 計算、定数の一貫性 |
 | `windows_loopback_service_test.dart` | 4 | DLL ロード失敗時のフォールバック |
+| `udp_sender_service_test.dart` | 6 | HELLO/ACK 接続、RESYNC で seq リセット、BYE 切断 |
 | `hub_state_provider_test.dart` | 4 | クライアント追加 / 削除 / 音量 / ミュート |
 
 ### 静的解析
