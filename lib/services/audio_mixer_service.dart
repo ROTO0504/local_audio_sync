@@ -45,10 +45,17 @@ class AudioMixerService {
     }
   }
 
-  void addClient(int clientId) {
+  /// クライアントを登録する。
+  ///
+  /// [onResync] は JitterBuffer がシーケンス断絶を検出したときに呼ばれ、
+  /// Hub 側から送信側へ RESYNC 制御メッセージを送るために使う。
+  /// null の場合は内部リセットのみで送信側通知は行わない。
+  void addClient(int clientId, {void Function()? onResync}) {
     // Dispose any existing decoder before overwriting (handles reconnect without BYE)
     _decoders[clientId]?.dispose();
-    _jitterBuffers[clientId] = JitterBuffer();
+    _jitterBuffers[clientId] = JitterBuffer(
+      onResyncDetected: onResync == null ? null : (_) => onResync(),
+    );
     final dec = OpusDecoderService()..init();
     _decoders[clientId] = dec;
     if (_initialized) {

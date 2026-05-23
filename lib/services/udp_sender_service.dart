@@ -79,6 +79,13 @@ class UdpSenderService {
             _clientId = int.tryParse(parts[1]) ?? 0;
             if (!completer.isCompleted) completer.complete();
           }
+        } else if (text.startsWith('RESYNC:')) {
+          // Hub から「seq を 0 に戻して送り直せ」と要求された
+          final id = int.tryParse(text.substring(7));
+          if (id == null || id == _clientId) {
+            debugPrint('[UdpSender] RESYNC 受信、sequence をリセット');
+            _sequence = 0;
+          }
         }
       },
       onError: (Object err) {

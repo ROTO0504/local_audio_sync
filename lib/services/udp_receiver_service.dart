@@ -39,6 +39,21 @@ class UdpReceiverService {
     }
   }
 
+  /// JitterBuffer がシーケンス断絶を検出したときに、送信側へ seq リセット要求を送る。
+  /// 受信した側は内部の sequence を 0 に戻し、新しい seq から再送信する。
+  void sendResync(String ip, int port, int clientId) {
+    final msg = 'RESYNC:$clientId';
+    try {
+      _socket?.send(
+        Uint8List.fromList(msg.codeUnits),
+        InternetAddress(ip),
+        port,
+      );
+    } catch (e) {
+      debugPrint('[UdpReceiver] RESYNC 送信失敗: $e');
+    }
+  }
+
   /// 受信開始。失敗時は再 bind を試みる。
   Future<void> start() async {
     if (_running) return;

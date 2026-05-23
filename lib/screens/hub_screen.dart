@@ -55,7 +55,18 @@ class _HubScreenState extends ConsumerState<HubScreen> {
       if (existing != null) {
         _mixer.removeClient(id);
       }
-      _mixer.addClient(id);
+      // JitterBuffer が seq 断絶を検出したら送信側に RESYNC を返す。
+      // 現在登録されている ip/port は Provider から読む(クライアントが port を
+      // 切り替えても追従できるよう、コールバック発火時の値を使う)。
+      _mixer.addClient(
+        id,
+        onResync: () {
+          final current = ref.read(hubStateProvider)[uuid];
+          if (current != null) {
+            _receiver.sendResync(current.ip, current.port, id);
+          }
+        },
+      );
     };
 
     _receiver.onClientPing = (clientId) {
