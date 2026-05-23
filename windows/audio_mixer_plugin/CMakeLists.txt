@@ -28,7 +28,18 @@ target_compile_definitions(audio_mixer_plugin PRIVATE
 
 # Suppress C4819 (file encoding) and C4244 (uint64→uint32 narrowing in miniaudio)
 if(MSVC)
-    target_compile_options(audio_mixer_plugin PRIVATE /wd4819 /wd4244)
+    # miniaudio.h は約 9 万行のシングルヘッダで、MINIAUDIO_IMPLEMENTATION を
+    # 展開すると Debug ビルドで PDB のモジュール上限(LNK1140
+    # "too many modules for program database")を踏む。
+    # 対策として、デバッグ情報を PDB ではなく obj ファイル内に埋め込む(/Z7)。
+    # デバッグ情報自体は保持されるのでブレークポイントは利く。
+    target_compile_options(audio_mixer_plugin PRIVATE
+        /wd4819 /wd4244
+        $<$<CONFIG:Debug>:/Z7>
+    )
+    target_link_options(audio_mixer_plugin PRIVATE
+        $<$<CONFIG:Debug>:/DEBUG:NONE>
+    )
 endif()
 
 # ---------------------------------------------------------------------------
