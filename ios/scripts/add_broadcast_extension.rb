@@ -104,12 +104,24 @@ end
 # --- Runner が Extension に依存 + 埋め込み(Embed App Extensions)-----------
 runner.add_dependency(ext)
 
+# 重要: 「Embed App Extensions」コピーフェーズは Flutter の "Thin Binary"
+# スクリプトフェーズより **前** に置く。末尾に置くと新ビルドシステムが
+# "Cycle inside Runner; building could produce unreliable results" を出す
+# (appex コピーと Thin Binary が相互依存になる)。これは Flutter + App
+# Extension で既知の問題で、順序を前にすると解消する。
 embed = runner.copy_files_build_phases.find do |p|
   p.symbol_dst_subfolder_spec == :plug_ins
 end
 unless embed
-  embed = runner.new_copy_files_build_phase('Embed App Extensions')
+  embed = project.new(Xcodeproj::Project::Object::PBXCopyFilesBuildPhase)
+  embed.name = 'Embed App Extensions'
   embed.symbol_dst_subfolder_spec = :plug_ins
+  thin_idx = runner.build_phases.index { |p| p.display_name == 'Thin Binary' }
+  if thin_idx
+    runner.build_phases.insert(thin_idx, embed)
+  else
+    runner.build_phases << embed
+  end
 end
 build_file = embed.add_file_reference(ext.product_reference, true)
 build_file.settings = { 'ATTRIBUTES' => ['RemoveHeadersOnCopy', 'CodeSignOnCopy'] }
