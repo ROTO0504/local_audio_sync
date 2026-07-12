@@ -1,6 +1,3 @@
-// TODO: Download miniaudio.h from https://raw.githubusercontent.com/mackron/miniaudio/master/miniaudio.h
-//       and place it in this directory (windows/audio_mixer_plugin/miniaudio.h) before building.
-
 #define MINIAUDIO_IMPLEMENTATION
 #include "miniaudio.h"
 

@@ -1,0 +1,40 @@
+// audio_mixer_ffi の Android ビルド(NDK/CMake で libaudio_mixer_plugin.so を生成)。
+group = "com.example.audio_mixer_ffi"
+version = "1.0"
+
+buildscript {
+    repositories {
+        google()
+        mavenCentral()
+    }
+    dependencies {
+        // ホストアプリ(settings.gradle.kts)の AGP が優先される。
+        // ここはプラグイン単体ビルド用のフォールバック。
+        classpath("com.android.tools.build:gradle:8.7.3")
+    }
+}
+
+rootProject.allprojects {
+    repositories {
+        google()
+        mavenCentral()
+    }
+}
+
+apply plugin: "com.android.library"
+
+android {
+    namespace = "com.example.audio_mixer_ffi"
+
+    compileSdk = 35
+
+    defaultConfig {
+        minSdk = 21
+    }
+
+    externalNativeBuild {
+        cmake {
+            path = "../src/CMakeLists.txt"
+        }
+    }
+}

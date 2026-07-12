@@ -1,12 +1,15 @@
 import 'dart:ffi';
-import 'dart:io';
+import 'package:audio_mixer_ffi/audio_mixer_ffi.dart';
 import 'package:ffi/ffi.dart';
 import 'dart:typed_data';
 import 'jitter_buffer.dart';
 import 'opus_decoder_service.dart';
 
-/// Dart-side orchestrator for the Windows audio mixer FFI plugin.
-/// On non-Windows platforms this is a no-op stub.
+/// Dart-side orchestrator for the audio mixer FFI plugin.
+///
+/// miniaudio ベースのネイティブミキサー(packages/audio_mixer_ffi)を叩く。
+/// Windows / Android / iOS / macOS すべてで動作し、ネイティブライブラリを
+/// ロードできない環境(テスト等)では no-op になる。
 class AudioMixerService {
   static DynamicLibrary? _lib;
   static late final _MixerInit _mixerInit;
@@ -22,9 +25,9 @@ class AudioMixerService {
   final Map<int, OpusDecoderService> _decoders = {};
 
   static void initFfi() {
-    if (_initialized || !Platform.isWindows) return;
+    if (_initialized) return;
     try {
-      _lib = DynamicLibrary.open('audio_mixer_plugin.dll');
+      _lib = openAudioMixerLibrary();
       _mixerInit = _lib!
           .lookupFunction<Void Function(), void Function()>('mixer_init');
       _mixerPushFrames = _lib!.lookupFunction<
