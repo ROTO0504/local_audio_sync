@@ -18,6 +18,10 @@ class ClientInfo {
   final bool isPaused;
   final DateTime lastSeen;
 
+  /// 初回 HELLO を受けた時刻(接続開始時刻)。ダッシュボードの稼働時間表示用。
+  /// 再接続(BYE なし)では初回の値を保持する。未設定は null。
+  final DateTime? connectedAt;
+
   /// 受信音声の RMS レベル(0.0〜1.0)。Hub 側の VU メーター表示用。
   final double vuLevel;
 
@@ -33,6 +37,7 @@ class ClientInfo {
     this.isActive = true,
     this.isPaused = false,
     required this.lastSeen,
+    this.connectedAt,
     this.vuLevel = 0.0,
   });
 
@@ -48,6 +53,7 @@ class ClientInfo {
     bool? isActive,
     bool? isPaused,
     DateTime? lastSeen,
+    DateTime? connectedAt,
     double? vuLevel,
   }) {
     return ClientInfo(
@@ -62,6 +68,7 @@ class ClientInfo {
       isActive: isActive ?? this.isActive,
       isPaused: isPaused ?? this.isPaused,
       lastSeen: lastSeen ?? this.lastSeen,
+      connectedAt: connectedAt ?? this.connectedAt,
       vuLevel: vuLevel ?? this.vuLevel,
     );
   }

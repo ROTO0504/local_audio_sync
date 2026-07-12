@@ -2,6 +2,7 @@ import 'dart:ffi';
 import 'package:audio_mixer_ffi/audio_mixer_ffi.dart';
 import 'package:ffi/ffi.dart';
 import 'dart:typed_data';
+import '../models/client_diagnostics.dart';
 import 'jitter_buffer.dart';
 import 'opus_decoder_service.dart';
 import 'pcm_constants.dart';
@@ -18,6 +19,7 @@ class AudioMixerService {
   static late final _MixerSetVolume _mixerSetVolume;
   static late final _MixerRemoveClient _mixerRemoveClient;
   static late final _MixerDestroy _mixerDestroy;
+  static late final _MixerStats _mixerStats;
 
   static bool _initialized = false;
 
@@ -50,6 +52,9 @@ class AudioMixerService {
           void Function(int)>('mixer_remove_client');
       _mixerDestroy = _lib!
           .lookupFunction<Void Function(), void Function()>('mixer_destroy');
+      _mixerStats = _lib!.lookupFunction<
+          Void Function(Uint16, Pointer<Int64>, Int32),
+          void Function(int, Pointer<Int64>, int)>('mixer_stats');
 
       _mixerInit();
       _initialized = true;
@@ -104,6 +109,40 @@ class AudioMixerService {
     if (_initialized) _mixerSetVolume(clientId, volume.clamp(0.0, 1.0));
   }
 
+  /// 指定クライアントのジッターバッファ統計スナップショットを返す。
+  /// 未登録なら null。lastSeen はミキサーが持たないため常に null で、
+  /// HubController 側で ClientInfo.lastSeen を補完する。
+  ClientDiagnostics? statsOf(int clientId) {
+    final jb = _jitterBuffers[clientId];
+    if (jb == null) return null;
+    // ネイティブ再生リングの実測(深さ・アンダー/オーバーラン)を併せて読む。
+    final native = _readNativeStats(clientId);
+    return ClientDiagnostics(
+      totalReceived: jb.totalReceived,
+      totalDropped: jb.totalDropped,
+      totalResynced: jb.totalResynced,
+      bufferedFrames: jb.bufferedCount,
+      ringFrames: native?[0] ?? 0,
+      underrunFrames: native?[1] ?? 0,
+      overrunFrames: native?[2] ?? 0,
+    );
+  }
+
+  /// ネイティブミキサーの診断スロットを読む。FFI 無効環境では null。
+  /// out[0]=リング深さ(frames), [1]=underrun累計, [2]=overrun累計, [3]=active。
+  List<int>? _readNativeStats(int clientId) {
+    if (!_initialized) return null;
+    const slots = 4;
+    final ptr = calloc<Int64>(slots);
+    try {
+      _mixerStats(clientId, ptr, slots);
+      final view = ptr.asTypedList(slots);
+      return List<int>.from(view);
+    } finally {
+      calloc.free(ptr);
+    }
+  }
+
   void _drainJitterBuffer(int clientId) {
     final jb = _jitterBuffers[clientId];
     final dec = _decoders[clientId];
@@ -151,3 +190,4 @@ typedef _MixerPushFrames = void Function(int clientId, Pointer<Float> pcm, int f
 typedef _MixerSetVolume = void Function(int clientId, double volume);
 typedef _MixerRemoveClient = void Function(int clientId);
 typedef _MixerDestroy = void Function();
+typedef _MixerStats = void Function(int clientId, Pointer<Int64> out, int outLen);

@@ -39,6 +39,12 @@ struct ClientState {
 
     // Whether this slot is currently in use.
     std::atomic<bool> active{false};
+
+    // 診断カウンタ(フレーム単位、単調増加)。
+    // underrun: 再生要求に対しリングが枯渇し無音で埋めた分。
+    // overrun : 書き込み時にリングが満杯で捨てた分。
+    std::atomic<uint64_t> underrunFrames{0};
+    std::atomic<uint64_t> overrunFrames{0};
 };
 
 // ---------------------------------------------------------------------------
@@ -102,6 +108,12 @@ static void data_callback(
         }
 
         c.readHead.store(r % kRingBufSamples, std::memory_order_release);
+
+        // リング枯渇分は無音のまま(memset 済み)。診断のため計上する。
+        if (toRead < totalSamples) {
+            c.underrunFrames.fetch_add(
+                (totalSamples - toRead) / kChannels, std::memory_order_relaxed);
+        }
     }
 
     // Clip the mixed output to [-1.0, 1.0] to prevent distortion.
@@ -127,6 +139,8 @@ void mixer_init(void) {
         g_clients[i].readHead.store(0, std::memory_order_relaxed);
         g_clients[i].volume.store(1.0f, std::memory_order_relaxed);
         g_clients[i].active.store(false, std::memory_order_relaxed);
+        g_clients[i].underrunFrames.store(0, std::memory_order_relaxed);
+        g_clients[i].overrunFrames.store(0, std::memory_order_relaxed);
     }
 
     ma_device_config config = ma_device_config_init(ma_device_type_playback);
@@ -172,6 +186,12 @@ void mixer_push_frames(uint16_t clientId, const float* pcm, int frameCount) {
     }
 
     c.writeHead.store(w % kRingBufSamples, std::memory_order_release);
+
+    // 満杯で書けなかった分は overrun として計上する。
+    if (toWrite < totalSamples) {
+        c.overrunFrames.fetch_add(
+            (totalSamples - toWrite) / kChannels, std::memory_order_relaxed);
+    }
 }
 
 void mixer_set_volume(uint16_t clientId, float volume) {
@@ -195,6 +215,25 @@ void mixer_remove_client(uint16_t clientId) {
     c.writeHead.store(0, std::memory_order_relaxed);
     c.readHead.store(0, std::memory_order_relaxed);
     c.volume.store(1.0f, std::memory_order_relaxed);
+    c.underrunFrames.store(0, std::memory_order_relaxed);
+    c.overrunFrames.store(0, std::memory_order_relaxed);
+}
+
+void mixer_stats(uint16_t clientId, int64_t* out, int outLen) {
+    if (out == nullptr || outLen <= 0) return;
+    // 呼び出し側が確保したスロットを 0 埋めしておく。
+    for (int i = 0; i < outLen; ++i) out[i] = 0;
+    if (clientId >= MAX_CLIENTS) return;
+
+    ClientState& c = g_clients[clientId];
+    const size_t depthSamples = rb_available_read(c);
+
+    // out[0]=リング深さ(frames), [1]=underrun累計(frames),
+    // [2]=overrun累計(frames), [3]=active(0/1)
+    if (outLen > 0) out[0] = static_cast<int64_t>(depthSamples / kChannels);
+    if (outLen > 1) out[1] = static_cast<int64_t>(c.underrunFrames.load(std::memory_order_relaxed));
+    if (outLen > 2) out[2] = static_cast<int64_t>(c.overrunFrames.load(std::memory_order_relaxed));
+    if (outLen > 3) out[3] = c.active.load(std::memory_order_relaxed) ? 1 : 0;
 }
 
 void mixer_destroy(void) {

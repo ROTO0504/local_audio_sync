@@ -31,8 +31,8 @@ class _SetupScreenState extends ConsumerState<SetupScreen> {
 
   @override
   Widget build(BuildContext context) {
+    final scheme = Theme.of(context).colorScheme;
     return Scaffold(
-      backgroundColor: Colors.white,
       body: SafeArea(
         child: Padding(
           padding: const EdgeInsets.all(32),
@@ -40,7 +40,7 @@ class _SetupScreenState extends ConsumerState<SetupScreen> {
             mainAxisAlignment: MainAxisAlignment.center,
             crossAxisAlignment: CrossAxisAlignment.stretch,
             children: [
-              const Icon(Icons.multitrack_audio, size: 72, color: Colors.blueAccent),
+              Icon(Icons.multitrack_audio, size: 72, color: scheme.primary),
               const SizedBox(height: 24),
               const Text(
                 'Local Audio Sync',
@@ -48,10 +48,10 @@ class _SetupScreenState extends ConsumerState<SetupScreen> {
                 style: TextStyle(fontSize: 28, fontWeight: FontWeight.bold),
               ),
               const SizedBox(height: 8),
-              const Text(
+              Text(
                 'ローカルネットワーク内で内部音声を集約・共有',
                 textAlign: TextAlign.center,
-                style: TextStyle(color: Colors.grey),
+                style: TextStyle(color: scheme.onSurfaceVariant),
               ),
               const SizedBox(height: 40),
 
@@ -145,11 +145,14 @@ class _RoleCard extends StatelessWidget {
                             color: color)),
                     const SizedBox(height: 4),
                     Text(subtitle,
-                        style: const TextStyle(fontSize: 12, color: Colors.grey)),
+                        style: TextStyle(
+                            fontSize: 12,
+                            color: Theme.of(context).colorScheme.onSurfaceVariant)),
                   ],
                 ),
               ),
-              Icon(Icons.chevron_right, color: Colors.grey.shade400),
+              Icon(Icons.chevron_right,
+                  color: Theme.of(context).colorScheme.outline),
             ],
           ),
         ),

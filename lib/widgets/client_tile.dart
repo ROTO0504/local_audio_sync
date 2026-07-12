@@ -1,7 +1,10 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../models/client_info.dart';
+import '../providers/hub_selection_provider.dart';
 import '../services/hub_controller.dart';
+import '../theme/app_colors.dart';
+import 'hub/diagnostics_chip.dart';
 import 'vu_meter.dart';
 
 /// プラットフォーム識別子に対応するアイコン。
@@ -22,7 +25,12 @@ class ClientTile extends ConsumerWidget {
   @override
   Widget build(BuildContext context, WidgetRef ref) {
     final controller = ref.read(hubControllerProvider);
+    final scheme = Theme.of(context).colorScheme;
+    final colors = context.statusColors;
     final active = client.isActive;
+    final selected = ref.watch(
+      hubSelectionProvider.select((s) => s.contains(client.id)),
+    );
     final shortId =
         client.id.length > 8 ? client.id.substring(0, 8) : client.id;
 
@@ -34,6 +42,14 @@ class ClientTile extends ConsumerWidget {
           padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
           child: Row(
             children: [
+              // 選択チェックボックス(一括操作の対象)
+              Checkbox(
+                value: selected,
+                visualDensity: VisualDensity.compact,
+                onChanged: (_) =>
+                    ref.read(hubSelectionProvider.notifier).toggle(client.id),
+              ),
+
               // プラットフォームアイコン + 接続状態ドット
               Stack(
                 alignment: Alignment.bottomRight,
@@ -41,15 +57,18 @@ class ClientTile extends ConsumerWidget {
                   Icon(
                     platformIcon(client.platform),
                     size: 28,
-                    color: active ? Colors.blueGrey : Colors.grey,
+                    color: active ? scheme.onSurfaceVariant : scheme.outline,
                   ),
                   Container(
                     width: 10,
                     height: 10,
                     decoration: BoxDecoration(
                       shape: BoxShape.circle,
-                      color: active ? Colors.green : Colors.grey,
-                      border: Border.all(color: Colors.white, width: 1.5),
+                      color: active ? colors.connected : scheme.outline,
+                      border: Border.all(
+                        color: scheme.surfaceContainerLow,
+                        width: 1.5,
+                      ),
                     ),
                   ),
                 ],
@@ -75,38 +94,17 @@ class ClientTile extends ConsumerWidget {
                         ),
                         if (!active) ...[
                           const SizedBox(width: 6),
-                          Container(
-                            padding: const EdgeInsets.symmetric(
-                              horizontal: 6,
-                              vertical: 1,
-                            ),
-                            decoration: BoxDecoration(
-                              color: Colors.grey.shade300,
-                              borderRadius: BorderRadius.circular(8),
-                            ),
-                            child: const Text(
-                              '切断',
-                              style: TextStyle(fontSize: 10),
-                            ),
+                          _StatusPill(
+                            label: '切断',
+                            background: scheme.surfaceContainerHighest,
+                            foreground: scheme.onSurfaceVariant,
                           ),
                         ] else if (client.isPaused) ...[
                           const SizedBox(width: 6),
-                          Container(
-                            padding: const EdgeInsets.symmetric(
-                              horizontal: 6,
-                              vertical: 1,
-                            ),
-                            decoration: BoxDecoration(
-                              color: Colors.orange.shade100,
-                              borderRadius: BorderRadius.circular(8),
-                            ),
-                            child: const Text(
-                              '一時停止中',
-                              style: TextStyle(
-                                fontSize: 10,
-                                color: Colors.deepOrange,
-                              ),
-                            ),
+                          _StatusPill(
+                            label: '一時停止中',
+                            background: colors.paused.withValues(alpha: 0.18),
+                            foreground: colors.paused,
                           ),
                         ],
                       ],
@@ -115,9 +113,11 @@ class ClientTile extends ConsumerWidget {
                       '${client.ip}  ·  ID: $shortId',
                       style: TextStyle(
                         fontSize: 11,
-                        color: Colors.grey.shade600,
+                        color: scheme.onSurfaceVariant,
                       ),
                     ),
+                    // 接続品質診断(ロス率などがあれば小さく表示)
+                    DiagnosticsChip(uuid: client.id, compact: true),
                   ],
                 ),
               ),
@@ -149,7 +149,9 @@ class ClientTile extends ConsumerWidget {
                   client.isMuted ? 'ミュート' : '${(client.volume * 100).round()}%',
                   style: TextStyle(
                     fontSize: 11,
-                    color: client.isMuted ? Colors.red : Colors.black87,
+                    color: client.isMuted
+                        ? colors.disconnected
+                        : scheme.onSurface,
                   ),
                   textAlign: TextAlign.center,
                 ),
@@ -160,7 +162,9 @@ class ClientTile extends ConsumerWidget {
                 icon: Icon(
                   client.isMuted ? Icons.volume_off : Icons.volume_up,
                   size: 20,
-                  color: client.isMuted ? Colors.red : Colors.black54,
+                  color: client.isMuted
+                      ? colors.disconnected
+                      : scheme.onSurfaceVariant,
                 ),
                 tooltip: client.isMuted ? 'ミュート解除' : 'ミュート',
                 onPressed: () => controller.setClientMuted(
@@ -177,8 +181,9 @@ class ClientTile extends ConsumerWidget {
                         ? Icons.play_circle_outline
                         : Icons.pause_circle_outline,
                     size: 20,
-                    color:
-                        client.isPaused ? Colors.deepOrange : Colors.black54,
+                    color: client.isPaused
+                        ? colors.paused
+                        : scheme.onSurfaceVariant,
                   ),
                   tooltip: client.isPaused ? '配信を再開させる' : '配信を一時停止させる',
                   onPressed: () => client.isPaused
@@ -186,16 +191,56 @@ class ClientTile extends ConsumerWidget {
                       : controller.pauseClient(client.id),
                 ),
 
+              // 配信停止(stopClient) — v2 クライアント + 接続中のみ
+              if (active && client.protocolVersion >= 2)
+                IconButton(
+                  icon: Icon(
+                    Icons.stop_circle_outlined,
+                    size: 20,
+                    color: colors.disconnected,
+                  ),
+                  tooltip: '配信を停止させる',
+                  onPressed: () => controller.stopClient(client.id),
+                ),
+
               // 切断済みクライアントの削除ボタン(設定は保持される)
               if (!active)
                 IconButton(
-                  icon: const Icon(Icons.close, size: 20, color: Colors.grey),
+                  icon: Icon(Icons.close, size: 20, color: scheme.outline),
                   tooltip: '一覧から削除(音量設定は保持)',
                   onPressed: () => controller.removeClientEntry(client.id),
                 ),
             ],
           ),
         ),
+      ),
+    );
+  }
+}
+
+/// 状態を表す小さなピル型ラベル(切断/一時停止中など)。
+class _StatusPill extends StatelessWidget {
+  final String label;
+  final Color background;
+  final Color foreground;
+
+  const _StatusPill({
+    required this.label,
+    required this.background,
+    required this.foreground,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 1),
+      decoration: BoxDecoration(
+        color: background,
+        borderRadius: BorderRadius.circular(8),
+      ),
+      child: Text(
+        label,
+        style: TextStyle(fontSize: 10, color: foreground),
       ),
     );
   }

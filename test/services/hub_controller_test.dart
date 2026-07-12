@@ -366,16 +366,65 @@ void main() {
       expect(mixer.volumes[id], closeTo(1.0, 0.001));
     });
 
-    test('setMasterVolume は全クライアントに適用される', () async {
+    test('master=0.5 のとき client.volume=1.0 → ミキサーへ実効 0.5 が渡る', () async {
       await startController();
       await sendHello(helloV2('uuid-a'), '10.0.0.1', 1111);
       await sendHello(helloV2('uuid-b'), '10.0.0.2', 2222);
+      final idA = controller.clientIdOf('uuid-a')!;
+      final idB = controller.clientIdOf('uuid-b')!;
 
       await controller.setMasterVolume(0.5);
 
-      final state = container.read(hubStateProvider);
-      expect(state['uuid-a']!.volume, closeTo(0.5, 0.001));
-      expect(state['uuid-b']!.volume, closeTo(0.5, 0.001));
+      expect(controller.masterVolume, closeTo(0.5, 0.001));
+      expect(mixer.volumes[idA], closeTo(0.5, 0.001));
+      expect(mixer.volumes[idB], closeTo(0.5, 0.001));
+    });
+
+    test('setMasterVolume は個別 volume を破壊せず実効値のみ変える', () async {
+      await startController();
+      await sendHello(helloV2('uuid-a'), '10.0.0.1', 1111);
+      final id = controller.clientIdOf('uuid-a')!;
+      // 個別音量を 0.8 に設定
+      await controller.setClientVolume('uuid-a', 0.8);
+
+      await controller.setMasterVolume(0.5);
+
+      // 個別 volume は 0.8 のまま保持される(非破壊)
+      expect(
+        container.read(hubStateProvider)['uuid-a']!.volume,
+        closeTo(0.8, 0.001),
+      );
+      // ミキサーへは実効値 0.8 * 0.5 = 0.4 が渡る
+      expect(mixer.volumes[id], closeTo(0.4, 0.001));
+
+      // master を戻せば実効値も戻る(個別 volume は不変)
+      await controller.setMasterVolume(1.0);
+      expect(
+        container.read(hubStateProvider)['uuid-a']!.volume,
+        closeTo(0.8, 0.001),
+      );
+      expect(mixer.volumes[id], closeTo(0.8, 0.001));
+    });
+
+    test('ミュート中は master に関わらず実効音量 0', () async {
+      await startController();
+      await sendHello(helloV2('uuid-a'), '10.0.0.1', 1111);
+      final id = controller.clientIdOf('uuid-a')!;
+
+      await controller.setClientMuted('uuid-a', muted: true);
+      await controller.setMasterVolume(0.5);
+
+      expect(mixer.volumes[id], 0.0);
+      // master を上げても 0 のまま
+      await controller.setMasterVolume(1.0);
+      expect(mixer.volumes[id], 0.0);
+    });
+
+    test('setMasterVolume は永続化され start 時に復元される', () async {
+      await startController();
+      await controller.setMasterVolume(0.3);
+      final prefs = await SharedPreferences.getInstance();
+      expect(prefs.getDouble('hub_master_volume'), closeTo(0.3, 0.001));
     });
 
     test('removeClientEntry で一覧から消えるが設定は残る', () async {
