@@ -2,14 +2,24 @@
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0">
 <dict>
-	<!-- App Store Connect(TestFlight)へ直接アップロードする設定。
-	     .github/workflows/testflight.yml の xcodebuild -exportArchive から使う -->
+	<!-- App Store Connect(TestFlight)へ手動署名で直接アップロードする設定。
+	     配布証明書は keychain にインポート済み、プロビジョニングプロファイルは
+	     .github/workflows/testflight.yml でインストール済みのものを名前で参照する。 -->
 	<key>method</key>
 	<string>app-store-connect</string>
 	<key>destination</key>
 	<string>upload</string>
 	<key>signingStyle</key>
-	<string>automatic</string>
+	<string>manual</string>
+	<key>teamID</key>
+	<string>7H7U867AYF</string>
+	<key>signingCertificate</key>
+	<string>Apple Distribution</string>
+	<key>provisioningProfiles</key>
+	<dict>
+		<key>com.roto0504.localAudioSync</key>
+		<string>Local Audio Sync App Store</string>
+	</dict>
 	<!-- ビルド番号は CI が --build-number で採番するため Xcode 側では管理しない -->
 	<key>manageAppVersionAndBuildNumber</key>
 	<false/>
