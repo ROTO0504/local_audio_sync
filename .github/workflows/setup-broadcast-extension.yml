@@ -1,0 +1,49 @@
+name: Setup Broadcast Extension
+
+# Broadcast Upload Extension ターゲットを xcodeproj gem で Runner.xcodeproj へ
+# 追加し、iOS ビルド(署名なし)が通るかを検証するためのワークフロー。
+# 生成された project.pbxproj は artifact として取得し、ビルドが通ったものだけを
+# 手元でコミットする(安全ゲート付き PDCA)。
+on:
+  workflow_dispatch:
+
+env:
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
+
+jobs:
+  add-extension:
+    runs-on: macos-14
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v5
+
+      - name: Set up Flutter
+        uses: subosito/flutter-action@v2
+        with:
+          flutter-version: '3.41.x'
+          cache: true
+
+      - name: Ensure xcodeproj gem
+        run: gem list -i xcodeproj || sudo gem install xcodeproj
+
+      - name: Add BroadcastExtension target (xcodeproj)
+        run: ruby ios/scripts/add_broadcast_extension.rb
+
+      - name: Show pbxproj diff summary
+        run: |
+          git status --short
+          git --no-pager diff --stat
+
+      # スクリプト出力(pod install 前のクリーンな pbxproj)を常にアップロードし、
+      # ビルドが失敗しても中身を確認できるようにする。
+      - name: Upload modified project.pbxproj
+        uses: actions/upload-artifact@v5
+        with:
+          name: pbxproj-with-extension
+          path: ios/Runner.xcodeproj/project.pbxproj
+
+      - name: Install dependencies
+        run: flutter pub get
+
+      - name: Verify iOS build (no codesign)
+        run: flutter build ios --no-codesign
