@@ -100,11 +100,11 @@ jobs:
         working-directory: ios
         run: pod install
 
-      - name: Archive (manual signing)
-        # 署名設定は Runner ターゲットの Release 構成(project.pbxproj)に
-        # 焼き込んである(Manual + Apple Distribution + App Store プロファイル)。
-        # コマンドラインで渡すと Pods 全ターゲットにも適用され「Pods は
-        # プロファイル非対応」で失敗するため、CLI では署名指定をしない。
+      - name: Archive (automatic signing)
+        # Runner と BroadcastExtension の2ターゲットを自動署名する。API キー +
+        # -allowProvisioningUpdates で不足プロファイル(Extension 用など)を
+        # 自動生成する(macOS 側と同じ方式)。CLI で渡すのは署名スタイルと
+        # チームのみ(プロファイル名は渡さない=Pods を壊さない)。
         run: |
           xcodebuild -workspace ios/Runner.xcworkspace \
             -scheme Runner \
@@ -112,15 +112,22 @@ jobs:
             -destination 'generic/platform=iOS' \
             -archivePath build/ios/Runner.xcarchive \
             archive \
-            DEVELOPMENT_TEAM="${{ secrets.APPLE_TEAM_ID }}"
+            -allowProvisioningUpdates \
+            -authenticationKeyPath "$HOME/private_keys/AuthKey_${{ secrets.ASC_KEY_ID }}.p8" \
+            -authenticationKeyID "${{ secrets.ASC_KEY_ID }}" \
+            -authenticationKeyIssuerID "${{ secrets.ASC_ISSUER_ID }}" \
+            DEVELOPMENT_TEAM="${{ secrets.APPLE_TEAM_ID }}" \
+            CODE_SIGN_STYLE=Automatic
 
       - name: Export and upload to TestFlight
-        # 署名は手動(ExportOptions)、アップロード認証だけ API キーを使う。
+        # 自動署名(ExportOptions)+ API キー認証。-allowProvisioningUpdates で
+        # Runner/Extension 双方のプロファイルを解決してエクスポートする。
         run: |
           xcodebuild -exportArchive \
             -archivePath build/ios/Runner.xcarchive \
             -exportOptionsPlist ios/ExportOptions.plist \
             -exportPath build/ios/export \
+            -allowProvisioningUpdates \
             -authenticationKeyPath "$HOME/private_keys/AuthKey_${{ secrets.ASC_KEY_ID }}.p8" \
             -authenticationKeyID "${{ secrets.ASC_KEY_ID }}" \
             -authenticationKeyIssuerID "${{ secrets.ASC_ISSUER_ID }}"

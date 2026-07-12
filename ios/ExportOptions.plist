@@ -2,24 +2,19 @@
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0">
 <dict>
-	<!-- App Store Connect(TestFlight)へ手動署名で直接アップロードする設定。
-	     配布証明書は keychain にインポート済み、プロビジョニングプロファイルは
-	     .github/workflows/testflight.yml でインストール済みのものを名前で参照する。 -->
+	<!-- App Store Connect(TestFlight)へ自動署名で直接アップロードする設定。
+	     Runner と BroadcastExtension の2ターゲットを、App Store Connect API キー +
+	     -allowProvisioningUpdates で自動プロビジョニングする(macOS 側と同じ方式)。
+	     以前は Runner のみ手動プロファイル指定だったが、Extension 追加に伴い
+	     自動署名へ統一した(Extension 用プロファイルを手で用意せずに済む)。 -->
 	<key>method</key>
 	<string>app-store-connect</string>
 	<key>destination</key>
 	<string>upload</string>
 	<key>signingStyle</key>
-	<string>manual</string>
+	<string>automatic</string>
 	<key>teamID</key>
 	<string>7H7U867AYF</string>
-	<key>signingCertificate</key>
-	<string>Apple Distribution</string>
-	<key>provisioningProfiles</key>
-	<dict>
-		<key>com.roto0504.localAudioSync</key>
-		<string>Local Audio Sync App Store</string>
-	</dict>
 	<!-- ビルド番号は CI が --build-number で採番するため Xcode 側では管理しない -->
 	<key>manageAppVersionAndBuildNumber</key>
 	<false/>
