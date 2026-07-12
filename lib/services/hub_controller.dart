@@ -7,11 +7,14 @@ import '../models/audio_packet.dart';
 import '../models/client_info.dart';
 import '../models/control_messages.dart';
 import '../providers/hub_state_provider.dart';
+import 'package:shared_preferences/shared_preferences.dart';
+
 import 'audio_mixer_service.dart';
 import 'client_settings_store.dart';
 import 'device_identity_service.dart';
 import 'discovery_service.dart';
 import 'hub_background_keeper.dart';
+import 'jitter_buffer.dart';
 import 'mdns_discovery_service.dart';
 import 'udp_receiver_service.dart';
 
@@ -69,7 +72,12 @@ class HubController {
   Timer? _staleTimer;
   bool _running = false;
 
+  static const String _kJitterPresetKey = 'hub_jitter_preset';
+
   bool get isRunning => _running;
+
+  /// 現在のジッターバッファ遅延プリセット。
+  JitterBufferPreset get jitterPreset => _mixer.jitterPreset;
 
   /// CMD を最大回数再送しても届かなかったときに UI へ通知する。
   /// (uuid, 失敗したコマンド)を渡す。
@@ -90,6 +98,11 @@ class HubController {
     _receiver.onAudioPacket = _handleAudioPacket;
     _receiver.onCommandFailed = _handleCommandFailed;
     _mixer.onClientLevel = _handleClientLevel;
+
+    // 保存済みのジッターバッファプリセットを復元
+    final prefs = await SharedPreferences.getInstance();
+    _mixer.jitterPreset =
+        JitterBufferPreset.fromName(prefs.getString(_kJitterPresetKey));
 
     final hubId = await _identity.getHubId();
     await _receiver.start();
@@ -176,20 +189,49 @@ class HubController {
     if (existing != null) {
       _mixer.removeClient(id);
     }
-    // JitterBuffer が seq 断絶を検出したら送信側に RESYNC を返す。
-    // ip/port はコールバック発火時点の値を Provider から読む(クライアントが
-    // ポートを切り替えても追従できるように)。
+    _registerMixerClient(hello.uuid, id);
+    // 復元した音量をネイティブミキサーへ即時反映
+    _mixer.setVolume(id, isMuted ? 0.0 : volume);
+  }
+
+  /// ミキサーへクライアントを登録する。
+  /// JitterBuffer が seq 断絶を検出したら送信側に RESYNC を返す。
+  /// ip/port はコールバック発火時点の値を Provider から読む(クライアントが
+  /// ポートを切り替えても追従できるように)。
+  void _registerMixerClient(String uuid, int clientId) {
     _mixer.addClient(
-      id,
+      clientId,
       onResync: () {
-        final current = _ref.read(hubStateProvider)[hello.uuid];
+        final current = _ref.read(hubStateProvider)[uuid];
         if (current != null) {
-          _receiver.sendResync(current.ip, current.port, id);
+          _receiver.sendResync(current.ip, current.port, clientId);
         }
       },
     );
-    // 復元した音量をネイティブミキサーへ即時反映
-    _mixer.setVolume(id, isMuted ? 0.0 : volume);
+  }
+
+  /// ジッターバッファの遅延プリセットを切り替える。
+  /// 以後の接続に加え、接続中のクライアントのバッファも作り直して即時適用する。
+  Future<void> setJitterPreset(JitterBufferPreset preset) async {
+    if (_mixer.jitterPreset == preset) return;
+    _mixer.jitterPreset = preset;
+
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setString(_kJitterPresetKey, preset.name);
+
+    // 接続中クライアントのバッファを新しい深さで再生成
+    // (一瞬途切れるが、以降は新プリセットの遅延で安定する)
+    for (final entry in _uuidToClientId.entries) {
+      _mixer.removeClient(entry.value);
+      _registerMixerClient(entry.key, entry.value);
+      final client = _ref.read(hubStateProvider)[entry.key];
+      if (client != null) {
+        _mixer.setVolume(
+          entry.value,
+          client.isMuted ? 0.0 : client.volume,
+        );
+      }
+    }
   }
 
   void _handlePing(int clientId) {

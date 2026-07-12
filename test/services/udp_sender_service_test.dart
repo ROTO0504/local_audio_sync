@@ -296,6 +296,22 @@ void main() {
       final sender = UdpSenderService();
       final actions = <RemoteCommandAction>[];
       sender.onRemoteCommand = actions.add;
+
+      // ローカル UDP でもタイミングが揺れるため、固定待ちではなく
+      // 条件成立までポーリングする。
+      Future<void> waitFor(
+        bool Function() condition, {
+        Duration timeout = const Duration(seconds: 3),
+      }) async {
+        final deadline = DateTime.now().add(timeout);
+        while (!condition() && DateTime.now().isBefore(deadline)) {
+          await Future<void>.delayed(const Duration(milliseconds: 20));
+        }
+      }
+
+      int ackCount() =>
+          hub.receivedTexts.where((t) => t == 'CMDACK:23:1').length;
+
       try {
         final port = await hub.start();
         await sender.connect(
@@ -306,21 +322,20 @@ void main() {
           platform: 'windows',
         );
 
-        // 同じ commandSeq の CMD を 2 回(再送を模擬)
+        // 同じ commandSeq の CMD を 2 回(再送間隔を空けて模擬)
         hub.sendCommandTo(23, 1, 'PAUSE');
+        await waitFor(() => ackCount() >= 1);
         hub.sendCommandTo(23, 1, 'PAUSE');
-        await Future<void>.delayed(const Duration(milliseconds: 120));
+        await waitFor(() => ackCount() >= 2);
 
         // 実行は 1 回だけ
         expect(actions, equals([RemoteCommandAction.pause]));
         // ACK は再送分にも毎回返す(Hub の再送を止めるため)
-        final acks =
-            hub.receivedTexts.where((t) => t == 'CMDACK:23:1').length;
-        expect(acks, 2);
+        expect(ackCount(), 2);
 
         // 新しい commandSeq は実行される
         hub.sendCommandTo(23, 2, 'RESUME');
-        await Future<void>.delayed(const Duration(milliseconds: 80));
+        await waitFor(() => actions.length >= 2);
         expect(
           actions,
           equals([RemoteCommandAction.pause, RemoteCommandAction.resume]),

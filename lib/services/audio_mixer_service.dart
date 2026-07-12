@@ -29,6 +29,11 @@ class AudioMixerService {
   /// 20ms フレームごとに呼ばれるため、UI へ反映する側でスロットリングすること。
   void Function(int clientId, double level)? onClientLevel;
 
+  /// 以後の addClient に適用するジッターバッファの遅延プリセット。
+  /// 既存クライアントへ適用するには remove → add で作り直す
+  /// (HubController.setJitterPreset 参照)。
+  JitterBufferPreset jitterPreset = JitterBufferPreset.lan;
+
   static void initFfi() {
     if (_initialized) return;
     try {
@@ -62,6 +67,8 @@ class AudioMixerService {
     // Dispose any existing decoder before overwriting (handles reconnect without BYE)
     _decoders[clientId]?.dispose();
     _jitterBuffers[clientId] = JitterBuffer(
+      targetDelayFrames: jitterPreset.targetDelayFrames,
+      maxBufferFrames: jitterPreset.maxBufferFrames,
       onResyncDetected: onResync == null ? null : (_) => onResync(),
     );
     final dec = OpusDecoderService()..init();

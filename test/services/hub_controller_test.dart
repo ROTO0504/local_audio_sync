@@ -11,6 +11,7 @@ import 'package:local_audio_sync/services/device_identity_service.dart';
 import 'package:local_audio_sync/services/discovery_service.dart';
 import 'package:local_audio_sync/services/hub_background_keeper.dart';
 import 'package:local_audio_sync/services/hub_controller.dart';
+import 'package:local_audio_sync/services/jitter_buffer.dart';
 import 'package:local_audio_sync/services/mdns_discovery_service.dart';
 import 'package:local_audio_sync/services/udp_receiver_service.dart';
 import 'package:shared_preferences/shared_preferences.dart';
@@ -606,6 +607,36 @@ void main() {
             .every((c) => !c.isPaused),
         isTrue,
       );
+    });
+  });
+
+  group('HubController ジッターバッファプリセット', () {
+    test('setJitterPreset で既存クライアントのバッファが作り直され永続化される', () async {
+      await startController();
+      await sendHello(helloV2('uuid-a'), '10.0.0.1', 1111);
+      final id = controller.clientIdOf('uuid-a')!;
+      final addCountBefore = mixer.addedClients.length;
+
+      await controller.setJitterPreset(JitterBufferPreset.wan);
+
+      expect(controller.jitterPreset, JitterBufferPreset.wan);
+      expect(mixer.removedClients, contains(id));
+      expect(mixer.addedClients.length, addCountBefore + 1);
+
+      final prefs = await SharedPreferences.getInstance();
+      expect(prefs.getString('hub_jitter_preset'), 'wan');
+    });
+
+    test('保存済みプリセットは start 時に復元される', () async {
+      SharedPreferences.setMockInitialValues({'hub_jitter_preset': 'wan'});
+      await startController();
+      expect(controller.jitterPreset, JitterBufferPreset.wan);
+    });
+
+    test('不明なプリセット名は lan にフォールバックする', () {
+      expect(JitterBufferPreset.fromName('wan'), JitterBufferPreset.wan);
+      expect(JitterBufferPreset.fromName('unknown'), JitterBufferPreset.lan);
+      expect(JitterBufferPreset.fromName(null), JitterBufferPreset.lan);
     });
   });
 

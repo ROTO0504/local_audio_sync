@@ -5,6 +5,7 @@ import '../providers/app_mode_provider.dart';
 import '../providers/hub_state_provider.dart';
 import '../services/discovery_service.dart';
 import '../services/hub_controller.dart';
+import '../services/jitter_buffer.dart';
 import '../widgets/client_tile.dart';
 
 /// Hub(集約・再生側)の画面。
@@ -108,48 +109,84 @@ class _HubScreenState extends ConsumerState<HubScreen> {
   void _showSettings() {
     showDialog<void>(
       context: context,
-      builder: (_) => AlertDialog(
-        title: const Text('Hub 設定'),
-        content: Column(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            ListTile(
-              leading: const Icon(Icons.volume_up),
-              title: const Text('すべての音量を 100% にする'),
-              onTap: () {
-                setState(() => _masterVolume = 1.0);
-                _controller.setMasterVolume(1.0);
-                Navigator.of(context).pop();
-              },
+      builder: (_) => StatefulBuilder(
+        builder: (context, setDialogState) => AlertDialog(
+          title: const Text('Hub 設定'),
+          content: SingleChildScrollView(
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                ListTile(
+                  leading: const Icon(Icons.volume_up),
+                  title: const Text('すべての音量を 100% にする'),
+                  onTap: () {
+                    setState(() => _masterVolume = 1.0);
+                    _controller.setMasterVolume(1.0);
+                    Navigator.of(context).pop();
+                  },
+                ),
+                ListTile(
+                  leading: const Icon(Icons.volume_mute),
+                  title: const Text('すべてミュート'),
+                  onTap: () {
+                    final clients = ref.read(hubStateProvider);
+                    for (final id in clients.keys) {
+                      _controller.setClientMuted(id, muted: true);
+                    }
+                    Navigator.of(context).pop();
+                  },
+                ),
+                ListTile(
+                  leading: const Icon(Icons.swap_horiz),
+                  title: const Text('クライアントモードへ切替'),
+                  onTap: () async {
+                    Navigator.of(context).pop();
+                    await ref.read(appModeProvider.notifier).reset();
+                    if (mounted) context.mounted;
+                  },
+                ),
+                const Divider(),
+                const Padding(
+                  padding: EdgeInsets.symmetric(horizontal: 16, vertical: 4),
+                  child: Text(
+                    '受信バッファ(遅延と安定のバランス)',
+                    style: TextStyle(fontSize: 13, color: Colors.grey),
+                  ),
+                ),
+                RadioGroup<JitterBufferPreset>(
+                  groupValue: _controller.jitterPreset,
+                  onChanged: (value) async {
+                    if (value == null) return;
+                    await _controller.setJitterPreset(value);
+                    setDialogState(() {});
+                  },
+                  child: Column(
+                    children: [
+                      for (final preset in JitterBufferPreset.values)
+                        RadioListTile<JitterBufferPreset>(
+                          dense: true,
+                          title: Text(preset.label,
+                              style: const TextStyle(fontSize: 14)),
+                          subtitle: Text(
+                            '目標遅延 約${preset.targetDelayFrames * 20}ms',
+                            style: const TextStyle(fontSize: 11),
+                          ),
+                          value: preset,
+                        ),
+                    ],
+                  ),
+                ),
+              ],
             ),
-            ListTile(
-              leading: const Icon(Icons.volume_mute),
-              title: const Text('すべてミュート'),
-              onTap: () {
-                final clients = ref.read(hubStateProvider);
-                for (final id in clients.keys) {
-                  _controller.setClientMuted(id, muted: true);
-                }
-                Navigator.of(context).pop();
-              },
-            ),
-            ListTile(
-              leading: const Icon(Icons.swap_horiz),
-              title: const Text('クライアントモードへ切替'),
-              onTap: () async {
-                Navigator.of(context).pop();
-                await ref.read(appModeProvider.notifier).reset();
-                if (mounted) context.mounted;
-              },
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.of(context).pop(),
+              child: const Text('閉じる'),
             ),
           ],
         ),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.of(context).pop(),
-            child: const Text('閉じる'),
-          ),
-        ],
       ),
     );
   }
