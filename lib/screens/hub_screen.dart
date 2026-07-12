@@ -31,7 +31,13 @@ class _HubScreenState extends ConsumerState<HubScreen> {
     super.initState();
     _controller = ref.read(hubControllerProvider);
     _controller.onCommandDeliveryFailed = _onCommandDeliveryFailed;
-    _controller.start(ref.read(deviceNameProvider));
+    // start() はネイティブのオーディオデバイス初期化(mixer_init → miniaudio)を
+    // 同期的に行い重い。initState で直接呼ぶと最初のフレーム描画とレースして、
+    // Windows で初回フレームが提示されず画面が空(真っ白)になることがある。
+    // 最初のフレーム描画後に回して、UI を先に見せてから初期化する。
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (mounted) _controller.start(ref.read(deviceNameProvider));
+    });
   }
 
   @override
