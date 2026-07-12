@@ -46,6 +46,10 @@ class UdpSenderService {
   int _sequence = 0;
   Timer? _pingTimer;
 
+  /// 送信タイムスタンプ用の単調増加クロック(ms)。ジッタ推定・再生
+  /// タイミングの基準として各音声パケットに載せる。
+  final Stopwatch _clock = Stopwatch()..start();
+
   /// PONG による Hub 生存監視の状態。
   DateTime? _lastPongAt;
   bool _pongSupported = false;
@@ -67,6 +71,18 @@ class UdpSenderService {
   /// 接続失敗回数(統計用)。
   int _consecutiveFailures = 0;
   int get consecutiveFailures => _consecutiveFailures;
+
+  /// このセッションで送出した音声パケットの累計(リンク統計用)。
+  /// seq と違い pause / RESYNC でリセットされない単調増加カウンタ。
+  int _sentPackets = 0;
+  int get sentPackets => _sentPackets;
+
+  /// 直近の PONG 受信からの経過時間。まだ一度も PONG を受けていない
+  /// (旧 Hub / 接続直後)場合は null。
+  Duration? get sincePong {
+    final last = _lastPongAt;
+    return last == null ? null : DateTime.now().difference(last);
+  }
 
   /// Hub からのリモート制御コマンドを受けたときに呼ばれる。
   /// (重複排除済み。同じ commandSeq の再送では発火しない)
@@ -293,9 +309,11 @@ class UdpSenderService {
     final packet = AudioPacket(
       clientId: _clientId,
       sequence: _sequence,
+      timestampMs: _clock.elapsedMilliseconds & 0xFFFFFFFF,
       opusBytes: opusBytes,
     );
     _sequence = (_sequence + 1) & 0xFFFFFFFF;
+    _sentPackets++;
     _sendBytes(packet.toBytes());
   }
 
@@ -311,6 +329,7 @@ class UdpSenderService {
     _closeSocket();
     _hubIp = null;
     _sequence = 0;
+    _sentPackets = 0;
     _clientId = 0;
     _deviceName = null;
     _uuid = null;

@@ -1,6 +1,8 @@
 import 'dart:async';
 import 'dart:io';
+import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:local_audio_sync/providers/discovered_hubs_provider.dart';
 import 'package:local_audio_sync/services/discovery_service.dart';
 
 void main() {
@@ -159,6 +161,91 @@ void main() {
       // 直接の getter は無いが、stream に何も流れないことだけ確認
       expect(listener.lastBeaconAt.millisecondsSinceEpoch, 0);
       listener.dispose();
+    });
+  });
+
+  group('ClientDiscoveryListener.keyOf', () {
+    test('hubId があればそれを、無ければ ip:port をキーにする', () {
+      const v2 = DiscoveredHub(
+        ip: '1.2.3.4',
+        port: 7777,
+        name: 'X',
+        hubId: 'hub-x',
+      );
+      const v1 = DiscoveredHub(ip: '1.2.3.4', port: 7777, name: 'X');
+      expect(ClientDiscoveryListener.keyOf(v2), 'hub-x');
+      expect(ClientDiscoveryListener.keyOf(v1), '1.2.3.4:7777');
+    });
+  });
+
+  group('DiscoveredHubsNotifier 集合管理', () {
+    late ProviderContainer container;
+    late DiscoveredHubsNotifier notifier;
+
+    setUp(() {
+      container = ProviderContainer();
+      notifier = container.read(discoveredHubsProvider.notifier);
+    });
+
+    tearDown(() => container.dispose());
+
+    test('upsert で複数 Hub を同時保持する', () {
+      notifier.upsert(
+        const DiscoveredHub(ip: '1.1.1.1', port: 7777, name: 'A', hubId: 'a'),
+      );
+      notifier.upsert(
+        const DiscoveredHub(ip: '2.2.2.2', port: 7777, name: 'B', hubId: 'b'),
+      );
+      final hubs = container.read(discoveredHubsProvider);
+      expect(hubs.keys, containsAll(['a', 'b']));
+    });
+
+    test('v2 ビーコンは同一 ip:port の v1 エントリを畳む', () {
+      notifier.upsert(
+        const DiscoveredHub(ip: '1.1.1.1', port: 7777, name: 'A'),
+      );
+      expect(container.read(discoveredHubsProvider), contains('1.1.1.1:7777'));
+
+      notifier.upsert(
+        const DiscoveredHub(ip: '1.1.1.1', port: 7777, name: 'A', hubId: 'a'),
+      );
+      final hubs = container.read(discoveredHubsProvider);
+      expect(hubs, contains('a'));
+      expect(hubs, isNot(contains('1.1.1.1:7777')));
+      expect(hubs, hasLength(1));
+    });
+
+    test('既に v2 があるとき v1 ビーコンは重複追加しない', () {
+      notifier.upsert(
+        const DiscoveredHub(ip: '1.1.1.1', port: 7777, name: 'A', hubId: 'a'),
+      );
+      notifier.upsert(
+        const DiscoveredHub(ip: '1.1.1.1', port: 7777, name: 'A'),
+      );
+      expect(container.read(discoveredHubsProvider), hasLength(1));
+      expect(container.read(discoveredHubsProvider), contains('a'));
+    });
+
+    test('pruneStale で古い Hub が除去される', () async {
+      notifier.upsert(
+        const DiscoveredHub(ip: '1.1.1.1', port: 7777, name: 'A', hubId: 'a'),
+      );
+      await Future<void>.delayed(const Duration(milliseconds: 10));
+      notifier.pruneStale(Duration.zero);
+      expect(container.read(discoveredHubsProvider), isEmpty);
+    });
+
+    test('remove / clear で明示的に消せる', () {
+      notifier.upsert(
+        const DiscoveredHub(ip: '1.1.1.1', port: 7777, name: 'A', hubId: 'a'),
+      );
+      notifier.upsert(
+        const DiscoveredHub(ip: '2.2.2.2', port: 7777, name: 'B', hubId: 'b'),
+      );
+      notifier.remove('a');
+      expect(container.read(discoveredHubsProvider), isNot(contains('a')));
+      notifier.clear();
+      expect(container.read(discoveredHubsProvider), isEmpty);
     });
   });
 }

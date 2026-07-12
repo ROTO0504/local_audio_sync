@@ -1,5 +1,7 @@
 import 'package:shared_preferences/shared_preferences.dart';
 
+import 'discovery_service.dart' show kAudioPort;
+
 /// 手動接続した Hub(`ip:port`)の履歴を保存する。
 ///
 /// ブロードキャスト / mDNS が届かないネットワーク(別セグメント、VPN、
@@ -7,7 +9,19 @@ import 'package:shared_preferences/shared_preferences.dart';
 /// 直接入力して接続する。よく使う接続先をすぐ選べるよう直近 5 件を残す。
 class ManualHubStore {
   static const String _kHistoryKey = 'manual_hub_history';
+  static const String _kDefaultPortKey = 'client_default_port';
   static const int _kMaxEntries = 5;
+
+  /// 手動接続時の既定ポート(設定画面で変更可能)。未設定なら [kAudioPort]。
+  Future<int> loadDefaultPort() async {
+    final prefs = await SharedPreferences.getInstance();
+    return prefs.getInt(_kDefaultPortKey) ?? kAudioPort;
+  }
+
+  Future<void> saveDefaultPort(int port) async {
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setInt(_kDefaultPortKey, port);
+  }
 
   /// 直近の接続先(新しい順)。各要素は `ip:port` 形式。
   Future<List<String>> loadHistory() async {
@@ -26,6 +40,21 @@ class ManualHubStore {
       history.removeRange(_kMaxEntries, history.length);
     }
     await prefs.setStringList(_kHistoryKey, history);
+  }
+
+  /// 履歴から 1 件を削除する(設定画面の記憶 Hub 管理用)。
+  Future<void> remove(String entry) async {
+    final prefs = await SharedPreferences.getInstance();
+    final history = prefs.getStringList(_kHistoryKey) ?? [];
+    if (history.remove(entry)) {
+      await prefs.setStringList(_kHistoryKey, history);
+    }
+  }
+
+  /// 履歴をすべて消す。
+  Future<void> clearHistory() async {
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.remove(_kHistoryKey);
   }
 
   /// `ip:port` 文字列をパースする。不正なら null。

@@ -4,8 +4,10 @@ import 'dart:math';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../models/audio_packet.dart';
+import '../models/client_diagnostics.dart';
 import '../models/client_info.dart';
 import '../models/control_messages.dart';
+import '../providers/hub_diagnostics_provider.dart';
 import '../providers/hub_state_provider.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
@@ -43,6 +45,7 @@ class HubController {
     Duration staleCheckInterval = const Duration(seconds: 10),
     Duration staleTimeout = const Duration(seconds: 10),
     Duration vuUpdateInterval = const Duration(milliseconds: 150),
+    Duration diagnosticsInterval = const Duration(seconds: 1),
   })  : _receiver = receiver ?? UdpReceiverService(),
         _mixer = mixer ?? AudioMixerService(),
         _beacon = beacon ?? HubBeaconSender(),
@@ -52,7 +55,8 @@ class HubController {
         _settingsStore = settingsStore ?? ClientSettingsStore(),
         _staleCheckInterval = staleCheckInterval,
         _staleTimeout = staleTimeout,
-        _vuUpdateInterval = vuUpdateInterval;
+        _vuUpdateInterval = vuUpdateInterval,
+        _diagnosticsInterval = diagnosticsInterval;
 
   final Ref _ref;
   final UdpReceiverService _receiver;
@@ -65,16 +69,32 @@ class HubController {
   final Duration _staleCheckInterval;
   final Duration _staleTimeout;
   final Duration _vuUpdateInterval;
+  final Duration _diagnosticsInterval;
 
   final Map<String, int> _uuidToClientId = {};
   final Map<String, DateTime> _lastVuUpdate = {};
   int _nextClientId = 1;
   Timer? _staleTimer;
+  Timer? _diagnosticsTimer;
   bool _running = false;
 
+  /// マスター音量(0.0〜1.0)。各クライアントの個別音量には乗算で効く。
+  /// クライアントの volume は破壊せず、実効音量のみをミキサーへ反映する。
+  double _masterVolume = 1.0;
+
+  /// start した時刻(ダッシュボードの稼働時間表示用)。stop で null に戻す。
+  DateTime? _startedAt;
+
   static const String _kJitterPresetKey = 'hub_jitter_preset';
+  static const String _kMasterVolumeKey = 'hub_master_volume';
 
   bool get isRunning => _running;
+
+  /// 現在のマスター音量(0.0〜1.0)。
+  double get masterVolume => _masterVolume;
+
+  /// start した時刻(未起動なら null)。ダッシュボードの稼働時間表示用。
+  DateTime? get startedAt => _startedAt;
 
   /// 現在のジッターバッファ遅延プリセット。
   JitterBufferPreset get jitterPreset => _mixer.jitterPreset;
@@ -89,6 +109,7 @@ class HubController {
   Future<void> start(String hubName) async {
     if (_running) return;
     _running = true;
+    _startedAt = DateTime.now();
 
     AudioMixerService.initFfi();
 
@@ -99,10 +120,11 @@ class HubController {
     _receiver.onCommandFailed = _handleCommandFailed;
     _mixer.onClientLevel = _handleClientLevel;
 
-    // 保存済みのジッターバッファプリセットを復元
+    // 保存済みのジッターバッファプリセットとマスター音量を復元
     final prefs = await SharedPreferences.getInstance();
     _mixer.jitterPreset =
         JitterBufferPreset.fromName(prefs.getString(_kJitterPresetKey));
+    _masterVolume = (prefs.getDouble(_kMasterVolumeKey) ?? 1.0).clamp(0.0, 1.0);
 
     final hubId = await _identity.getHubId();
     await _receiver.start();
@@ -114,6 +136,9 @@ class HubController {
     await _backgroundKeeper.start();
 
     _staleTimer = Timer.periodic(_staleCheckInterval, (_) => _checkStale());
+    // 診断ポーリング: 全 clientId のミキサー統計を集約して provider へ流す。
+    _diagnosticsTimer =
+        Timer.periodic(_diagnosticsInterval, (_) => _pollDiagnostics());
   }
 
   Future<void> stop() async {
@@ -131,6 +156,9 @@ class HubController {
 
     _staleTimer?.cancel();
     _staleTimer = null;
+    _diagnosticsTimer?.cancel();
+    _diagnosticsTimer = null;
+    _startedAt = null;
     _beacon.stop();
     await _mdnsAdvertiser.stop();
     await _backgroundKeeper.stop();
@@ -181,6 +209,8 @@ class HubController {
       volume: volume,
       isMuted: isMuted,
       lastSeen: DateTime.now(),
+      // 初回接続時刻。再接続(existing あり)では既存値を保持する。
+      connectedAt: existing?.connectedAt ?? DateTime.now(),
     );
     _ref.read(hubStateProvider.notifier).addOrUpdateClient(client);
 
@@ -190,8 +220,17 @@ class HubController {
       _mixer.removeClient(id);
     }
     _registerMixerClient(hello.uuid, id);
-    // 復元した音量をネイティブミキサーへ即時反映
-    _mixer.setVolume(id, isMuted ? 0.0 : volume);
+    // 復元した音量をマスター音量込みの実効値でネイティブミキサーへ即時反映
+    _mixer.setVolume(id, effectiveVolume(hello.uuid));
+  }
+
+  /// クライアントの実効音量を返す。
+  /// = (ミュートなら 0、そうでなければ個別 volume) × マスター音量。
+  /// クライアントが未登録なら個別音量 1.0 扱いでマスター音量のみを返す。
+  double effectiveVolume(String uuid) {
+    final client = _ref.read(hubStateProvider)[uuid];
+    if (client == null) return _masterVolume;
+    return (client.isMuted ? 0.0 : client.volume) * _masterVolume;
   }
 
   /// ミキサーへクライアントを登録する。
@@ -226,10 +265,7 @@ class HubController {
       _registerMixerClient(entry.key, entry.value);
       final client = _ref.read(hubStateProvider)[entry.key];
       if (client != null) {
-        _mixer.setVolume(
-          entry.value,
-          client.isMuted ? 0.0 : client.volume,
-        );
+        _mixer.setVolume(entry.value, effectiveVolume(entry.key));
       }
     }
   }
@@ -253,17 +289,17 @@ class HubController {
   void _handleAudioPacket(AudioPacket packet, String ip) {
     // Provider の状態から音量・ミュートを反映してミキサーへ流す。
     final uuid = _uuidOf(packet.clientId);
-    double volume = 1.0;
+    double volume = _masterVolume;
     if (uuid != null) {
       final client = _ref.read(hubStateProvider)[uuid];
       if (client != null) {
-        volume = client.isMuted ? 0.0 : client.volume;
         // 一時停止中のはずのクライアントから音声が来た = クライアント側の
         // ローカル操作で再開された(後勝ちルール)。Hub の表示も追従する。
         if (client.isPaused) {
           _ref.read(hubStateProvider.notifier).setPaused(uuid, paused: false);
         }
       }
+      volume = effectiveVolume(uuid);
     }
     _mixer.setVolume(packet.clientId, volume);
     _mixer.pushEncodedPacket(packet.clientId, packet.sequence, packet.opusBytes);
@@ -288,7 +324,7 @@ class HubController {
     final clientId = _uuidToClientId[uuid];
     final client = _ref.read(hubStateProvider)[uuid];
     if (clientId != null && client != null) {
-      _mixer.setVolume(clientId, client.isMuted ? 0.0 : client.volume);
+      _mixer.setVolume(clientId, effectiveVolume(uuid));
     }
     await _persistSettings(uuid);
   }
@@ -299,16 +335,67 @@ class HubController {
     final clientId = _uuidToClientId[uuid];
     final client = _ref.read(hubStateProvider)[uuid];
     if (clientId != null && client != null) {
-      _mixer.setVolume(clientId, muted ? 0.0 : client.volume);
+      _mixer.setVolume(clientId, effectiveVolume(uuid));
     }
     await _persistSettings(uuid);
   }
 
-  /// 全クライアントの音量を一括変更する(マスター音量)。
+  /// マスター音量を変更する(非破壊)。
+  ///
+  /// 各クライアントの個別 volume は書き換えず、_masterVolume だけを更新して
+  /// 全クライアントの実効音量(volume × master)をミキサーへ再適用する。
+  /// 値は SharedPreferences(`hub_master_volume`)へ永続化する。
   Future<void> setMasterVolume(double volume) async {
-    final uuids = _ref.read(hubStateProvider).keys.toList();
+    _masterVolume = volume.clamp(0.0, 1.0);
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setDouble(_kMasterVolumeKey, _masterVolume);
+    for (final entry in _uuidToClientId.entries) {
+      _mixer.setVolume(entry.value, effectiveVolume(entry.key));
+    }
+  }
+
+  // ---- 選択集合への一括操作 ----
+
+  /// 選択集合を一時停止する。
+  void pauseSelected(Set<String> uuids) {
+    for (final uuid in uuids) {
+      pauseClient(uuid);
+    }
+  }
+
+  /// 選択集合を再開する。
+  void resumeSelected(Set<String> uuids) {
+    for (final uuid in uuids) {
+      resumeClient(uuid);
+    }
+  }
+
+  /// 選択集合の配信を停止させる。
+  void stopSelected(Set<String> uuids) {
+    for (final uuid in uuids) {
+      stopClient(uuid);
+    }
+  }
+
+  /// 選択集合のミュートを一括設定する。
+  Future<void> muteSelected(Set<String> uuids, bool muted) async {
+    for (final uuid in uuids) {
+      await setClientMuted(uuid, muted: muted);
+    }
+  }
+
+  /// 選択集合の音量を一括設定する。
+  Future<void> setSelectedVolume(Set<String> uuids, double volume) async {
     for (final uuid in uuids) {
       await setClientVolume(uuid, volume);
+    }
+  }
+
+  /// 全クライアントのミュートを解除する。
+  Future<void> unmuteAll() async {
+    final uuids = _ref.read(hubStateProvider).keys.toList();
+    for (final uuid in uuids) {
+      await setClientMuted(uuid, muted: false);
     }
   }
 
@@ -426,6 +513,30 @@ class HubController {
       if (entry.value == clientId) return entry.key;
     }
     return null;
+  }
+
+  // ---- 診断ポーリング ----
+
+  /// 全 clientId のミキサー統計を集約し、lastSeen を ClientInfo から補完して
+  /// hubDiagnosticsProvider へ流す。_uuidToClientId をそのまま辿るので
+  /// clientId→uuid の逆引き線形探索(_uuidOf)を回避できる。
+  void _pollDiagnostics() {
+    final clients = _ref.read(hubStateProvider);
+    final map = <String, ClientDiagnostics>{};
+    for (final entry in _uuidToClientId.entries) {
+      final uuid = entry.key;
+      final stats = _mixer.statsOf(entry.value);
+      final info = clients[uuid];
+      if (stats == null && info == null) continue;
+      map[uuid] = ClientDiagnostics(
+        totalReceived: stats?.totalReceived ?? 0,
+        totalDropped: stats?.totalDropped ?? 0,
+        totalResynced: stats?.totalResynced ?? 0,
+        bufferedFrames: stats?.bufferedFrames ?? 0,
+        lastSeen: info?.lastSeen,
+      );
+    }
+    _ref.read(hubDiagnosticsProvider.notifier).setAll(map);
   }
 }
 

@@ -81,6 +81,21 @@ MIXER_API void mixer_remove_client(uint16_t clientId);
  */
 MIXER_API void mixer_destroy(void);
 
+/**
+ * mixer_stats
+ *
+ * Fills caller-provided int64 slots with per-client diagnostics:
+ *   out[0] = current ring buffer depth in frames
+ *   out[1] = cumulative underrun frames (ring starved on playback)
+ *   out[2] = cumulative overrun frames (ring full on write, dropped)
+ *   out[3] = active flag (0/1)
+ *
+ * @param clientId Identifier in the range [0, MAX_CLIENTS).
+ * @param out      Caller-allocated array of at least `outLen` int64 slots.
+ * @param outLen   Number of slots available in `out`.
+ */
+MIXER_API void mixer_stats(uint16_t clientId, int64_t* out, int outLen);
+
 // ===========================================================================
 // Loopback (system audio capture) API
 // ===========================================================================

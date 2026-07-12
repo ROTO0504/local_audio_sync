@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import '../providers/client_state_provider.dart';
+import '../theme/app_colors.dart';
 
 class ConnectionStatusBadge extends StatelessWidget {
   final ClientConnectionStatus status;
@@ -8,11 +9,12 @@ class ConnectionStatusBadge extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final colors = context.statusColors;
     final (label, color) = switch (status) {
-      ClientConnectionStatus.searching => ('検索中...', Colors.orange),
-      ClientConnectionStatus.connecting => ('接続中...', Colors.blue),
-      ClientConnectionStatus.connected => ('接続済み', Colors.green),
-      ClientConnectionStatus.disconnected => ('切断', Colors.red),
+      ClientConnectionStatus.searching => ('検索中...', colors.searching),
+      ClientConnectionStatus.connecting => ('接続中...', colors.connecting),
+      ClientConnectionStatus.connected => ('接続済み', colors.connected),
+      ClientConnectionStatus.disconnected => ('切断', colors.disconnected),
     };
     return Chip(
       avatar: CircleAvatar(
