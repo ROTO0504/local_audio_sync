@@ -35,8 +35,18 @@ jobs:
       - name: Build macOS (release)
         run: flutter build macos --release
 
+      # GitHub の upload-artifact は .app 内のシンボリックリンク・コード署名・
+      # 実行権限ビットを保持しない(= ダウンロードすると .framework の symlink が
+      # 壊れ・署名無効化でバンドルが起動不能になる)。ditto で .app を zip に
+      # 固めてから upload することで、これらを保持したまま持ち出せる。
+      # 受け取り側は GitHub の外側 zip を展開 → 中の *.zip を展開すれば .app が復元。
+      - name: Zip .app (preserve symlinks / signature / permissions)
+        run: |
+          cd build/macos/Build/Products/Release
+          ditto -c -k --keepParent local_audio_sync.app local_audio_sync-macos.zip
+
       - name: Upload macOS app artifact
         uses: actions/upload-artifact@v5
         with:
           name: macos-app
-          path: build/macos/Build/Products/Release/local_audio_sync.app
+          path: build/macos/Build/Products/Release/local_audio_sync-macos.zip
