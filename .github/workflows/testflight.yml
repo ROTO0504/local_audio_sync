@@ -117,7 +117,9 @@ jobs:
             -authenticationKeyID "${{ secrets.ASC_KEY_ID }}" \
             -authenticationKeyIssuerID "${{ secrets.ASC_ISSUER_ID }}" \
             DEVELOPMENT_TEAM="${{ secrets.APPLE_TEAM_ID }}" \
-            CODE_SIGN_STYLE=Automatic
+            CODE_SIGN_STYLE=Automatic \
+            PROVISIONING_PROFILE_SPECIFIER="" \
+            PROVISIONING_PROFILE=""
 
       - name: Export and upload to TestFlight
         # 自動署名(ExportOptions)+ API キー認証。-allowProvisioningUpdates で
