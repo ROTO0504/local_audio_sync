@@ -5,6 +5,8 @@ on:
     branches:
       - main
       - develop
+  # 任意のブランチをオンデマンドでビルド確認するための手動トリガー。
+  workflow_dispatch:
 
 env:
   FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true

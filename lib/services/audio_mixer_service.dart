@@ -19,8 +19,11 @@ class AudioMixerService {
   static late final _MixerSetVolume _mixerSetVolume;
   static late final _MixerRemoveClient _mixerRemoveClient;
   static late final _MixerDestroy _mixerDestroy;
-  static late final _MixerStats _mixerStats;
-  static late final _MixerSetTargetLatency _mixerSetTargetLatency;
+
+  // 任意関数(診断・目標遅延)。ビルドによってはシンボルが無い場合があるので
+  // nullable にし、見つからなくてもコア再生(init/push/volume)は止めない。
+  static _MixerStats? _mixerStats;
+  static _MixerSetTargetLatency? _mixerSetTargetLatency;
 
   static bool _initialized = false;
 
@@ -53,17 +56,30 @@ class AudioMixerService {
           void Function(int)>('mixer_remove_client');
       _mixerDestroy = _lib!
           .lookupFunction<Void Function(), void Function()>('mixer_destroy');
-      _mixerStats = _lib!.lookupFunction<
-          Void Function(Uint16, Pointer<Int64>, Int32),
-          void Function(int, Pointer<Int64>, int)>('mixer_stats');
-      _mixerSetTargetLatency = _lib!.lookupFunction<
-          Void Function(Int32),
-          void Function(int)>('mixer_set_target_latency_ms');
 
       _mixerInit();
       _initialized = true;
     } catch (e) {
-      // FFI not available — playback will be silent on Windows until DLL is built
+      // コア FFI が無い環境(テスト等)。再生は no-op になる。
+      return;
+    }
+
+    // 任意関数(診断 / 目標遅延)。ビルドによってはシンボルが無いことがあるため
+    // 個別に解決し、見つからなくてもコア再生は止めない(プリバッファは C++ 側の
+    // 既定 80ms で機能し続ける)。これで「新関数の欠落で Hub 全体が無音」を防ぐ。
+    try {
+      _mixerStats = _lib!.lookupFunction<
+          Void Function(Uint16, Pointer<Int64>, Int32),
+          void Function(int, Pointer<Int64>, int)>('mixer_stats');
+    } catch (_) {
+      _mixerStats = null;
+    }
+    try {
+      _mixerSetTargetLatency = _lib!.lookupFunction<
+          Void Function(Int32),
+          void Function(int)>('mixer_set_target_latency_ms');
+    } catch (_) {
+      _mixerSetTargetLatency = null;
     }
   }
 
@@ -116,7 +132,8 @@ class AudioMixerService {
   /// 再生プリバッファ(目標遅延)を ms 単位で設定する。大きいほどジッタ耐性が
   /// 上がる代わりに遅延が増える。ネイティブ側で [20, 500]ms にクランプされる。
   void setTargetLatencyMs(int ms) {
-    if (_initialized) _mixerSetTargetLatency(ms);
+    final fn = _mixerSetTargetLatency;
+    if (_initialized && fn != null) fn(ms);
   }
 
   /// 指定クライアントのジッターバッファ統計スナップショットを返す。
@@ -141,11 +158,12 @@ class AudioMixerService {
   /// ネイティブミキサーの診断スロットを読む。FFI 無効環境では null。
   /// out[0]=リング深さ(frames), [1]=underrun累計, [2]=overrun累計, [3]=active。
   List<int>? _readNativeStats(int clientId) {
-    if (!_initialized) return null;
+    final fn = _mixerStats;
+    if (!_initialized || fn == null) return null;
     const slots = 4;
     final ptr = calloc<Int64>(slots);
     try {
-      _mixerStats(clientId, ptr, slots);
+      fn(clientId, ptr, slots);
       final view = ptr.asTypedList(slots);
       return List<int>.from(view);
     } finally {
