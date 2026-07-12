@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../providers/app_mode_provider.dart';
 import '../providers/hub_state_provider.dart';
+import '../services/discovery_service.dart';
 import '../services/hub_controller.dart';
 import '../widgets/client_tile.dart';
 
@@ -17,12 +18,17 @@ class HubScreen extends ConsumerStatefulWidget {
 
 class _HubScreenState extends ConsumerState<HubScreen> {
   late final HubController _controller;
+  String? _localIp;
+  double _masterVolume = 1.0;
 
   @override
   void initState() {
     super.initState();
     _controller = ref.read(hubControllerProvider);
     _controller.start(ref.read(deviceNameProvider));
+    getLocalIpv4().then((ip) {
+      if (mounted) setState(() => _localIp = ip);
+    });
   }
 
   @override
@@ -35,6 +41,7 @@ class _HubScreenState extends ConsumerState<HubScreen> {
   Widget build(BuildContext context) {
     final clients = ref.watch(hubStateProvider);
     final name = ref.watch(deviceNameProvider);
+    final activeCount = clients.values.where((c) => c.isActive).length;
 
     return Scaffold(
       appBar: AppBar(
@@ -47,20 +54,31 @@ class _HubScreenState extends ConsumerState<HubScreen> {
           ),
         ],
       ),
-      body: clients.isEmpty
-          ? const _EmptyState()
-          : ListView(
-              children: [
-                Padding(
-                  padding: const EdgeInsets.all(12),
-                  child: Text(
-                    '${clients.length} 台のクライアントが接続中',
-                    style: const TextStyle(color: Colors.grey, fontSize: 13),
+      body: Column(
+        children: [
+          _HubHeader(
+            localIp: _localIp,
+            port: kAudioPort,
+            activeCount: activeCount,
+            totalCount: clients.length,
+            masterVolume: _masterVolume,
+            onMasterVolumeChanged: (v) {
+              setState(() => _masterVolume = v);
+              _controller.setMasterVolume(v);
+            },
+          ),
+          Expanded(
+            child: clients.isEmpty
+                ? const _EmptyState()
+                : ListView(
+                    children: [
+                      ...clients.values.map((c) => ClientTile(client: c)),
+                      const SizedBox(height: 12),
+                    ],
                   ),
-                ),
-                ...clients.values.map((c) => ClientTile(client: c)),
-              ],
-            ),
+          ),
+        ],
+      ),
     );
   }
 
@@ -76,7 +94,8 @@ class _HubScreenState extends ConsumerState<HubScreen> {
               leading: const Icon(Icons.volume_up),
               title: const Text('すべての音量を 100% にする'),
               onTap: () {
-                ref.read(hubStateProvider.notifier).setMasterVolumeAll(1.0);
+                setState(() => _masterVolume = 1.0);
+                _controller.setMasterVolume(1.0);
                 Navigator.of(context).pop();
               },
             ),
@@ -86,7 +105,7 @@ class _HubScreenState extends ConsumerState<HubScreen> {
               onTap: () {
                 final clients = ref.read(hubStateProvider);
                 for (final id in clients.keys) {
-                  ref.read(hubStateProvider.notifier).setMuted(id, muted: true);
+                  _controller.setClientMuted(id, muted: true);
                 }
                 Navigator.of(context).pop();
               },
@@ -106,6 +125,79 @@ class _HubScreenState extends ConsumerState<HubScreen> {
           TextButton(
             onPressed: () => Navigator.of(context).pop(),
             child: const Text('閉じる'),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+/// 自 IP・接続数・マスター音量をまとめたヘッダ。
+class _HubHeader extends StatelessWidget {
+  final String? localIp;
+  final int port;
+  final int activeCount;
+  final int totalCount;
+  final double masterVolume;
+  final ValueChanged<double> onMasterVolumeChanged;
+
+  const _HubHeader({
+    required this.localIp,
+    required this.port,
+    required this.activeCount,
+    required this.totalCount,
+    required this.masterVolume,
+    required this.onMasterVolumeChanged,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      width: double.infinity,
+      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 10),
+      color: Theme.of(context).colorScheme.surfaceContainerHighest,
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            children: [
+              const Icon(Icons.lan, size: 16, color: Colors.grey),
+              const SizedBox(width: 6),
+              Text(
+                localIp == null ? 'IP 取得中...' : '$localIp:$port',
+                style: const TextStyle(fontSize: 13, color: Colors.black87),
+              ),
+              const Spacer(),
+              Text(
+                totalCount == 0
+                    ? 'クライアント待機中'
+                    : '接続中 $activeCount / $totalCount 台',
+                style: const TextStyle(fontSize: 12, color: Colors.grey),
+              ),
+            ],
+          ),
+          Row(
+            children: [
+              const Icon(Icons.speaker_group, size: 16, color: Colors.grey),
+              const SizedBox(width: 6),
+              const Text('マスター音量', style: TextStyle(fontSize: 12)),
+              Expanded(
+                child: Slider(
+                  value: masterVolume,
+                  min: 0,
+                  max: 1,
+                  onChanged: onMasterVolumeChanged,
+                ),
+              ),
+              SizedBox(
+                width: 40,
+                child: Text(
+                  '${(masterVolume * 100).round()}%',
+                  style: const TextStyle(fontSize: 12),
+                  textAlign: TextAlign.end,
+                ),
+              ),
+            ],
           ),
         ],
       ),
