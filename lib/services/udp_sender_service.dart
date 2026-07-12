@@ -136,14 +136,27 @@ class UdpSenderService {
 
     // HELLO2(v2)と HELLO(v1)を併送する。新 Hub は HELLO2 を優先して
     // 拾い、旧 Hub は HELLO2 を無視して HELLO だけを処理する。
+    // UDP なので単発の HELLO はロストし得る。ACKHELLO が返るまで
+    // 500ms 間隔で再送する(Hub 側は同一 uuid に同じ ID を返すだけなので
+    // 重複受信は無害)。
     final hello = ClientHello(
       name: _deviceName!,
       uuid: _uuid!,
       platform: _platform ?? 'unknown',
       protocolVersion: kProtocolVersion,
     );
-    _sendText(hello.encodeHello2());
-    _sendText(hello.encodeHelloV1());
+    void sendHello() {
+      _sendText(hello.encodeHello2());
+      _sendText(hello.encodeHelloV1());
+    }
+
+    sendHello();
+    final helloRetryTimer = Timer.periodic(
+      const Duration(milliseconds: 500),
+      (_) {
+        if (!completer.isCompleted) sendHello();
+      },
+    );
 
     try {
       await completer.future.timeout(
@@ -154,6 +167,8 @@ class UdpSenderService {
       await _closeSocket();
       _consecutiveFailures++;
       rethrow;
+    } finally {
+      helloRetryTimer.cancel();
     }
 
     _consecutiveFailures = 0;

@@ -7,6 +7,18 @@ import 'package:local_audio_sync/models/audio_packet.dart';
 import 'package:local_audio_sync/models/control_messages.dart';
 import 'package:local_audio_sync/services/udp_sender_service.dart';
 
+/// ローカル UDP でも遅延やバースト時のドロップが起こり得るため、
+/// 固定待ちではなく条件成立までポーリングする。
+Future<void> waitFor(
+  bool Function() condition, {
+  Duration timeout = const Duration(seconds: 3),
+}) async {
+  final deadline = DateTime.now().add(timeout);
+  while (!condition() && DateTime.now().isBefore(deadline)) {
+    await Future<void>.delayed(const Duration(milliseconds: 20));
+  }
+}
+
 /// モック Hub。loopback で UDP を bind し、HELLO/ACKHELLO の挙動と
 /// 受信した音声パケットの seq を観測する。
 class _MockHub {
@@ -175,11 +187,12 @@ void main() {
       final port = await hub.start();
       await sender.connect('127.0.0.1', port, 'tester', 'uuid-seq');
 
+      // バースト送信はループバックでも稀にドロップするため、
+      // 実運用(20ms ペーシング)と同様に 1 発ずつ到着を確認する
       for (int i = 0; i < 5; i++) {
         sender.sendAudio(Uint8List.fromList([i & 0xFF]));
+        await waitFor(() => hub.receivedSeqs.length >= i + 1);
       }
-      // ソケットの非同期受信に余裕を持たせる
-      await Future<void>.delayed(const Duration(milliseconds: 100));
 
       expect(hub.receivedSeqs, equals([0, 1, 2, 3, 4]));
     });
@@ -196,8 +209,8 @@ void main() {
         // 既に何発か送って seq を進める
         for (int i = 0; i < 3; i++) {
           sender.sendAudio(Uint8List.fromList([i & 0xFF]));
+          await waitFor(() => hub.receivedSeqs.length >= i + 1);
         }
-        await Future<void>.delayed(const Duration(milliseconds: 80));
         expect(hub.receivedSeqs, equals([0, 1, 2]));
 
         // Hub から RESYNC を返す
@@ -207,8 +220,9 @@ void main() {
         // ここから seq は再び 0 起点
         hub.receivedSeqs.clear();
         sender.sendAudio(Uint8List.fromList([0xAA]));
+        await waitFor(() => hub.receivedSeqs.isNotEmpty);
         sender.sendAudio(Uint8List.fromList([0xBB]));
-        await Future<void>.delayed(const Duration(milliseconds: 80));
+        await waitFor(() => hub.receivedSeqs.length >= 2);
 
         expect(hub.receivedSeqs, equals([0, 1]));
       } finally {
@@ -225,8 +239,9 @@ void main() {
         await sender.connect('127.0.0.1', port, 'tester', 'uuid-other');
 
         sender.sendAudio(Uint8List.fromList([0x01]));
+        await waitFor(() => hub.receivedSeqs.isNotEmpty);
         sender.sendAudio(Uint8List.fromList([0x02]));
-        await Future<void>.delayed(const Duration(milliseconds: 80));
+        await waitFor(() => hub.receivedSeqs.length >= 2);
 
         // 別の clientId 宛 RESYNC
         hub.sendResyncTo(99);
@@ -234,7 +249,7 @@ void main() {
 
         hub.receivedSeqs.clear();
         sender.sendAudio(Uint8List.fromList([0x03]));
-        await Future<void>.delayed(const Duration(milliseconds: 80));
+        await waitFor(() => hub.receivedSeqs.isNotEmpty);
 
         // seq は途切れず継続(2 → 3)
         expect(hub.receivedSeqs, equals([2]));
@@ -296,18 +311,6 @@ void main() {
       final sender = UdpSenderService();
       final actions = <RemoteCommandAction>[];
       sender.onRemoteCommand = actions.add;
-
-      // ローカル UDP でもタイミングが揺れるため、固定待ちではなく
-      // 条件成立までポーリングする。
-      Future<void> waitFor(
-        bool Function() condition, {
-        Duration timeout = const Duration(seconds: 3),
-      }) async {
-        final deadline = DateTime.now().add(timeout);
-        while (!condition() && DateTime.now().isBefore(deadline)) {
-          await Future<void>.delayed(const Duration(milliseconds: 20));
-        }
-      }
 
       int ackCount() =>
           hub.receivedTexts.where((t) => t == 'CMDACK:23:1').length;
