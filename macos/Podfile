@@ -1,4 +1,5 @@
-platform :osx, '10.15'
+# ScreenCaptureKit(macOS 13+)と audio_mixer_ffi の要件に合わせる
+platform :osx, '13.0'
 
 # CocoaPods analytics sends network stats synchronously affecting flutter build latency.
 ENV['COCOAPODS_DISABLE_STATS'] = 'true'

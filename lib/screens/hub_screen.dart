@@ -1,14 +1,16 @@
-import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
-import '../models/client_info.dart';
+import '../models/control_messages.dart';
 import '../providers/app_mode_provider.dart';
 import '../providers/hub_state_provider.dart';
-import '../services/audio_mixer_service.dart';
 import '../services/discovery_service.dart';
-import '../services/udp_receiver_service.dart';
+import '../services/hub_controller.dart';
+import '../services/jitter_buffer.dart';
 import '../widgets/client_tile.dart';
 
+/// Hub(集約・再生側)の画面。
+/// コアロジックは [HubController] に集約されており、ここでは
+/// start / stop の呼び出しと状態の表示だけを行う。
 class HubScreen extends ConsumerStatefulWidget {
   const HubScreen({super.key});
 
@@ -17,143 +19,47 @@ class HubScreen extends ConsumerStatefulWidget {
 }
 
 class _HubScreenState extends ConsumerState<HubScreen> {
-  final HubBeaconSender _beacon = HubBeaconSender();
-  final UdpReceiverService _receiver = UdpReceiverService();
-  final AudioMixerService _mixer = AudioMixerService();
-  final Map<String, int> _uuidToClientId = {};
-  int _nextClientId = 1;
-  Timer? _staleTimer;
+  late final HubController _controller;
+  String? _localIp;
+  double _masterVolume = 1.0;
 
   @override
   void initState() {
     super.initState();
-    AudioMixerService.initFfi();
-    _startHub();
-  }
-
-  Future<void> _startHub() async {
-    final name = ref.read(deviceNameProvider);
-
-    // Wire up receiver callbacks
-    _receiver.onClientHello = (name, uuid, ip, port) {
-      final existing = _uuidToClientId[uuid];
-      final id = existing ?? _nextClientId++;
-      _uuidToClientId[uuid] = id;
-      _receiver.sendAckHello(ip, port, id);
-
-      final client = ClientInfo(
-        id: uuid,
-        name: name,
-        ip: ip,
-        port: port,
-        lastSeen: DateTime.now(),
-      );
-      ref.read(hubStateProvider.notifier).addOrUpdateClient(client);
-
-      // If the client is reconnecting (same UUID, no BYE was sent), remove stale
-      // mixer state first so addClient starts with a clean decoder/jitter buffer.
-      if (existing != null) {
-        _mixer.removeClient(id);
-      }
-      // JitterBuffer が seq 断絶を検出したら送信側に RESYNC を返す。
-      // 現在登録されている ip/port は Provider から読む(クライアントが port を
-      // 切り替えても追従できるよう、コールバック発火時の値を使う)。
-      _mixer.addClient(
-        id,
-        onResync: () {
-          final current = ref.read(hubStateProvider)[uuid];
-          if (current != null) {
-            _receiver.sendResync(current.ip, current.port, id);
-          }
-        },
-      );
-    };
-
-    _receiver.onClientPing = (clientId) {
-      final uuid = _uuidToClientId.entries
-          .where((e) => e.value == clientId)
-          .map((e) => e.key)
-          .firstOrNull;
-      if (uuid != null) {
-        ref.read(hubStateProvider.notifier).updateLastSeen(uuid);
-      }
-    };
-
-    _receiver.onClientBye = (clientId) {
-      final uuid = _uuidToClientId.entries
-          .where((e) => e.value == clientId)
-          .map((e) => e.key)
-          .firstOrNull;
-      if (uuid != null) {
-        ref.read(hubStateProvider.notifier).removeClient(uuid);
-        _uuidToClientId.remove(uuid);
-        _mixer.removeClient(clientId);
-      }
-    };
-
-    _receiver.onAudioPacket = (packet, ip) {
-      // Apply per-client volume from provider state
-      final uuid = _uuidToClientId.entries
-          .where((e) => e.value == packet.clientId)
-          .map((e) => e.key)
-          .firstOrNull;
-      double volume = 1.0;
-      if (uuid != null) {
-        final client = ref.read(hubStateProvider)[uuid];
-        if (client != null) {
-          volume = client.isMuted ? 0.0 : client.volume;
-        }
-      }
-      _mixer.setVolume(packet.clientId, volume);
-      _mixer.pushEncodedPacket(packet.clientId, packet.sequence, packet.opusBytes);
-    };
-
-    await _receiver.start();
-    await _beacon.start(name);
-
-    // Mark stale clients every 10s and release their mixer resources.
-    _staleTimer = Timer.periodic(const Duration(seconds: 10), (_) {
-      if (!mounted) return; // widget may have been disposed between ticks
-      final clients = ref.read(hubStateProvider);
-      final now = DateTime.now();
-      for (final entry in clients.entries) {
-        if (now.difference(entry.value.lastSeen).inSeconds > 10) {
-          ref.read(hubStateProvider.notifier).markInactive(entry.key);
-          // Also clean up the native mixer slot so the audio callback stops
-          // iterating over the dead client's ring buffer and native Opus
-          // decoder resources are freed promptly.
-          final clientId = _uuidToClientId[entry.key];
-          if (clientId != null) {
-            _mixer.removeClient(clientId);
-            // Keep the UUID mapping so that a reconnecting client reuses the
-            // same numeric ID; addClient will reinitialise its state cleanly.
-          }
-        }
-      }
+    _controller = ref.read(hubControllerProvider);
+    _controller.onCommandDeliveryFailed = _onCommandDeliveryFailed;
+    _controller.start(ref.read(deviceNameProvider));
+    getLocalIpv4().then((ip) {
+      if (mounted) setState(() => _localIp = ip);
     });
   }
 
   @override
   void dispose() {
-    // Null out callbacks first so any in-flight UDP events cannot touch
-    // the already-disposed Riverpod state or mixer after this point.
-    _receiver.onClientHello = null;
-    _receiver.onClientPing = null;
-    _receiver.onClientBye = null;
-    _receiver.onAudioPacket = null;
-
-    _staleTimer?.cancel();
-    _beacon.stop();
-    _receiver.stop();
-    _mixer.removeAllClients(); // release all native Opus decoders
-    AudioMixerService.destroyFfi();
+    _controller.onCommandDeliveryFailed = null;
+    _controller.stop();
     super.dispose();
+  }
+
+  void _onCommandDeliveryFailed(String uuid, RemoteCommandAction action) {
+    if (!mounted) return;
+    final client = ref.read(hubStateProvider)[uuid];
+    final name = client?.name ?? uuid;
+    final label = switch (action) {
+      RemoteCommandAction.pause => '一時停止',
+      RemoteCommandAction.resume => '再開',
+      RemoteCommandAction.stop => '停止',
+    };
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(content: Text('$name への$label指示が届きませんでした')),
+    );
   }
 
   @override
   Widget build(BuildContext context) {
     final clients = ref.watch(hubStateProvider);
     final name = ref.watch(deviceNameProvider);
+    final activeCount = clients.values.where((c) => c.isActive).length;
 
     return Scaffold(
       appBar: AppBar(
@@ -166,65 +72,209 @@ class _HubScreenState extends ConsumerState<HubScreen> {
           ),
         ],
       ),
-      body: clients.isEmpty
-          ? const _EmptyState()
-          : ListView(
-              children: [
-                Padding(
-                  padding: const EdgeInsets.all(12),
-                  child: Text(
-                    '${clients.length} 台のクライアントが接続中',
-                    style: const TextStyle(color: Colors.grey, fontSize: 13),
+      body: Column(
+        children: [
+          _HubHeader(
+            localIp: _localIp,
+            port: kAudioPort,
+            activeCount: activeCount,
+            totalCount: clients.length,
+            masterVolume: _masterVolume,
+            onMasterVolumeChanged: (v) {
+              setState(() => _masterVolume = v);
+              _controller.setMasterVolume(v);
+            },
+            onPauseAll:
+                activeCount == 0 ? null : () => _controller.pauseAll(),
+            onResumeAll:
+                clients.values.any((c) => c.isActive && c.isPaused)
+                    ? () => _controller.resumeAll()
+                    : null,
+          ),
+          Expanded(
+            child: clients.isEmpty
+                ? const _EmptyState()
+                : ListView(
+                    children: [
+                      ...clients.values.map((c) => ClientTile(client: c)),
+                      const SizedBox(height: 12),
+                    ],
                   ),
-                ),
-                ...clients.values.map((c) => ClientTile(client: c)),
-              ],
-            ),
+          ),
+        ],
+      ),
     );
   }
 
   void _showSettings() {
     showDialog<void>(
       context: context,
-      builder: (_) => AlertDialog(
-        title: const Text('Hub 設定'),
-        content: Column(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            ListTile(
-              leading: const Icon(Icons.volume_up),
-              title: const Text('すべての音量を 100% にする'),
-              onTap: () {
-                ref.read(hubStateProvider.notifier).setMasterVolumeAll(1.0);
-                Navigator.of(context).pop();
-              },
+      builder: (_) => StatefulBuilder(
+        builder: (context, setDialogState) => AlertDialog(
+          title: const Text('Hub 設定'),
+          content: SingleChildScrollView(
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                ListTile(
+                  leading: const Icon(Icons.volume_up),
+                  title: const Text('すべての音量を 100% にする'),
+                  onTap: () {
+                    setState(() => _masterVolume = 1.0);
+                    _controller.setMasterVolume(1.0);
+                    Navigator.of(context).pop();
+                  },
+                ),
+                ListTile(
+                  leading: const Icon(Icons.volume_mute),
+                  title: const Text('すべてミュート'),
+                  onTap: () {
+                    final clients = ref.read(hubStateProvider);
+                    for (final id in clients.keys) {
+                      _controller.setClientMuted(id, muted: true);
+                    }
+                    Navigator.of(context).pop();
+                  },
+                ),
+                ListTile(
+                  leading: const Icon(Icons.swap_horiz),
+                  title: const Text('クライアントモードへ切替'),
+                  onTap: () async {
+                    Navigator.of(context).pop();
+                    await ref.read(appModeProvider.notifier).reset();
+                    if (mounted) context.mounted;
+                  },
+                ),
+                const Divider(),
+                const Padding(
+                  padding: EdgeInsets.symmetric(horizontal: 16, vertical: 4),
+                  child: Text(
+                    '受信バッファ(遅延と安定のバランス)',
+                    style: TextStyle(fontSize: 13, color: Colors.grey),
+                  ),
+                ),
+                RadioGroup<JitterBufferPreset>(
+                  groupValue: _controller.jitterPreset,
+                  onChanged: (value) async {
+                    if (value == null) return;
+                    await _controller.setJitterPreset(value);
+                    setDialogState(() {});
+                  },
+                  child: Column(
+                    children: [
+                      for (final preset in JitterBufferPreset.values)
+                        RadioListTile<JitterBufferPreset>(
+                          dense: true,
+                          title: Text(preset.label,
+                              style: const TextStyle(fontSize: 14)),
+                          subtitle: Text(
+                            '目標遅延 約${preset.targetDelayFrames * 20}ms',
+                            style: const TextStyle(fontSize: 11),
+                          ),
+                          value: preset,
+                        ),
+                    ],
+                  ),
+                ),
+              ],
             ),
-            ListTile(
-              leading: const Icon(Icons.volume_mute),
-              title: const Text('すべてミュート'),
-              onTap: () {
-                final clients = ref.read(hubStateProvider);
-                for (final id in clients.keys) {
-                  ref.read(hubStateProvider.notifier).setMuted(id, muted: true);
-                }
-                Navigator.of(context).pop();
-              },
-            ),
-            ListTile(
-              leading: const Icon(Icons.swap_horiz),
-              title: const Text('クライアントモードへ切替'),
-              onTap: () async {
-                Navigator.of(context).pop();
-                await ref.read(appModeProvider.notifier).reset();
-                if (mounted) context.mounted;
-              },
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.of(context).pop(),
+              child: const Text('閉じる'),
             ),
           ],
         ),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.of(context).pop(),
-            child: const Text('閉じる'),
+      ),
+    );
+  }
+}
+
+/// 自 IP・接続数・マスター音量・一括操作をまとめたヘッダ。
+class _HubHeader extends StatelessWidget {
+  final String? localIp;
+  final int port;
+  final int activeCount;
+  final int totalCount;
+  final double masterVolume;
+  final ValueChanged<double> onMasterVolumeChanged;
+  final VoidCallback? onPauseAll;
+  final VoidCallback? onResumeAll;
+
+  const _HubHeader({
+    required this.localIp,
+    required this.port,
+    required this.activeCount,
+    required this.totalCount,
+    required this.masterVolume,
+    required this.onMasterVolumeChanged,
+    required this.onPauseAll,
+    required this.onResumeAll,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      width: double.infinity,
+      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 10),
+      color: Theme.of(context).colorScheme.surfaceContainerHighest,
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            children: [
+              const Icon(Icons.lan, size: 16, color: Colors.grey),
+              const SizedBox(width: 6),
+              Text(
+                localIp == null ? 'IP 取得中...' : '$localIp:$port',
+                style: const TextStyle(fontSize: 13, color: Colors.black87),
+              ),
+              const Spacer(),
+              Text(
+                totalCount == 0
+                    ? 'クライアント待機中'
+                    : '接続中 $activeCount / $totalCount 台',
+                style: const TextStyle(fontSize: 12, color: Colors.grey),
+              ),
+              const SizedBox(width: 4),
+              IconButton(
+                icon: const Icon(Icons.pause_circle_outline, size: 20),
+                tooltip: '全員の配信を一時停止',
+                visualDensity: VisualDensity.compact,
+                onPressed: onPauseAll,
+              ),
+              IconButton(
+                icon: const Icon(Icons.play_circle_outline, size: 20),
+                tooltip: '全員の配信を再開',
+                visualDensity: VisualDensity.compact,
+                onPressed: onResumeAll,
+              ),
+            ],
+          ),
+          Row(
+            children: [
+              const Icon(Icons.speaker_group, size: 16, color: Colors.grey),
+              const SizedBox(width: 6),
+              const Text('マスター音量', style: TextStyle(fontSize: 12)),
+              Expanded(
+                child: Slider(
+                  value: masterVolume,
+                  min: 0,
+                  max: 1,
+                  onChanged: onMasterVolumeChanged,
+                ),
+              ),
+              SizedBox(
+                width: 40,
+                child: Text(
+                  '${(masterVolume * 100).round()}%',
+                  style: const TextStyle(fontSize: 12),
+                  textAlign: TextAlign.end,
+                ),
+              ),
+            ],
           ),
         ],
       ),

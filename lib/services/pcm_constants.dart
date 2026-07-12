@@ -20,6 +20,19 @@ const int kFramesPerChunk = 960;
 /// 960 サンプル × 2 ch × 2 byte = 3840 byte。
 const int kBytesPerChunk = kFramesPerChunk * kChannels * 2;
 
+/// float32 PCM から RMS レベル(0.0〜1.0)を計算する。
+/// Hub 側の VU メーター描画に使う(デコード済み音声のレベル計測)。
+double computeFloat32RmsLevel(Float32List pcm) {
+  if (pcm.isEmpty) return 0.0;
+  double sumSq = 0;
+  for (final s in pcm) {
+    sumSq += s * s;
+  }
+  final mean = sumSq / pcm.length;
+  if (mean.isNaN || mean.isInfinite) return 0.0;
+  return mean.clamp(0.0, 1.0).toDouble();
+}
+
 /// PCM16 バイト列から RMS レベル(0.0〜1.0)を計算する。
 /// VU メーター描画に使う。サンプル数が 0 の場合は 0.0 を返す。
 double computePcm16RmsLevel(Uint8List pcm16) {

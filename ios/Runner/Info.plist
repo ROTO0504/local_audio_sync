@@ -60,9 +60,11 @@
 	<string>このデバイスで再生中の音声を取得し、ローカルネットワーク内のハブへ配信するために画面ブロードキャストを使用します。</string>
 	<key>NSLocalNetworkUsageDescription</key>
 	<string>同じ Wi-Fi 上の Local Audio Sync ハブを探し、音声データを送信するためにローカルネットワークへアクセスします。</string>
+	<!-- mDNS サービスタイプ名は RFC 6763 により 15 文字以内。
+	     旧名 _local-audio-sync(17 文字)は無効なので _lasync を使う -->
 	<key>NSBonjourServices</key>
 	<array>
-		<string>_local-audio-sync._udp</string>
+		<string>_lasync._udp</string>
 	</array>
 
 	<key>UILaunchStoryboardName</key>

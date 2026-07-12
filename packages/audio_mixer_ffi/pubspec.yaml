@@ -1,0 +1,26 @@
+name: audio_mixer_ffi
+description: >-
+  miniaudio ベースのクロスプラットフォームオーディオミキサー(Hub 再生)と
+  Windows WASAPI loopback キャプチャを FFI で公開するプラグイン。
+version: 1.0.0
+publish_to: 'none'
+
+environment:
+  sdk: ^3.5.0
+  flutter: '>=3.24.0'
+
+dependencies:
+  flutter:
+    sdk: flutter
+
+flutter:
+  plugin:
+    platforms:
+      android:
+        ffiPlugin: true
+      ios:
+        ffiPlugin: true
+      macos:
+        ffiPlugin: true
+      windows:
+        ffiPlugin: true

@@ -1,6 +1,43 @@
 import 'dart:collection';
 import 'dart:typed_data';
 
+/// ジッターバッファの遅延プリセット。
+///
+/// 1 フレーム = 20ms。LAN はレイテンシ優先(目標 40ms)、
+/// WAN / VPN 経由はジッタ・パケロス耐性優先(目標 200ms)。
+enum JitterBufferPreset {
+  lan(
+    targetDelayFrames: 2,
+    maxBufferFrames: 5,
+    label: 'LAN(低遅延)',
+  ),
+  wan(
+    targetDelayFrames: 10,
+    maxBufferFrames: 25,
+    label: 'WAN / VPN(安定重視)',
+  );
+
+  const JitterBufferPreset({
+    required this.targetDelayFrames,
+    required this.maxBufferFrames,
+    required this.label,
+  });
+
+  final int targetDelayFrames;
+  final int maxBufferFrames;
+
+  /// UI 表示用ラベル。
+  final String label;
+
+  /// 永続化された name から復元する(不明値は lan)。
+  static JitterBufferPreset fromName(String? name) {
+    for (final preset in JitterBufferPreset.values) {
+      if (preset.name == name) return preset;
+    }
+    return JitterBufferPreset.lan;
+  }
+}
+
 /// Opus 音声パケット用の固定遅延ジッターバッファ。
 ///
 /// 主な責務:

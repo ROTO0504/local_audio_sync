@@ -1,12 +1,16 @@
 import 'dart:ffi';
-import 'dart:io';
+import 'package:audio_mixer_ffi/audio_mixer_ffi.dart';
 import 'package:ffi/ffi.dart';
 import 'dart:typed_data';
 import 'jitter_buffer.dart';
 import 'opus_decoder_service.dart';
+import 'pcm_constants.dart';
 
-/// Dart-side orchestrator for the Windows audio mixer FFI plugin.
-/// On non-Windows platforms this is a no-op stub.
+/// Dart-side orchestrator for the audio mixer FFI plugin.
+///
+/// miniaudio ベースのネイティブミキサー(packages/audio_mixer_ffi)を叩く。
+/// Windows / Android / iOS / macOS すべてで動作し、ネイティブライブラリを
+/// ロードできない環境(テスト等)では no-op になる。
 class AudioMixerService {
   static DynamicLibrary? _lib;
   static late final _MixerInit _mixerInit;
@@ -21,10 +25,19 @@ class AudioMixerService {
   final Map<int, JitterBuffer> _jitterBuffers = {};
   final Map<int, OpusDecoderService> _decoders = {};
 
+  /// デコード済み音声の RMS レベル通知(Hub の VU メーター用)。
+  /// 20ms フレームごとに呼ばれるため、UI へ反映する側でスロットリングすること。
+  void Function(int clientId, double level)? onClientLevel;
+
+  /// 以後の addClient に適用するジッターバッファの遅延プリセット。
+  /// 既存クライアントへ適用するには remove → add で作り直す
+  /// (HubController.setJitterPreset 参照)。
+  JitterBufferPreset jitterPreset = JitterBufferPreset.lan;
+
   static void initFfi() {
-    if (_initialized || !Platform.isWindows) return;
+    if (_initialized) return;
     try {
-      _lib = DynamicLibrary.open('audio_mixer_plugin.dll');
+      _lib = openAudioMixerLibrary();
       _mixerInit = _lib!
           .lookupFunction<Void Function(), void Function()>('mixer_init');
       _mixerPushFrames = _lib!.lookupFunction<
@@ -54,6 +67,8 @@ class AudioMixerService {
     // Dispose any existing decoder before overwriting (handles reconnect without BYE)
     _decoders[clientId]?.dispose();
     _jitterBuffers[clientId] = JitterBuffer(
+      targetDelayFrames: jitterPreset.targetDelayFrames,
+      maxBufferFrames: jitterPreset.maxBufferFrames,
       onResyncDetected: onResync == null ? null : (_) => onResync(),
     );
     final dec = OpusDecoderService()..init();
@@ -102,7 +117,10 @@ class AudioMixerService {
       } else {
         pcm = dec.decodePLC();
       }
-      if (pcm == null || !_initialized) continue;
+      if (pcm == null) continue;
+      // ネイティブミキサーが無効(未対応環境)でも VU レベルは通知する
+      onClientLevel?.call(clientId, computeFloat32RmsLevel(pcm));
+      if (!_initialized) continue;
       _pushToFfi(clientId, pcm);
     }
   }

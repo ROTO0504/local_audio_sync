@@ -32,5 +32,28 @@ import UIKit
         withId: "com.example.local_audio_sync/broadcastPicker"
       )
     }
+
+    // Hub(集約・再生)モード用: miniaudio ミキサーの出力を裏で維持するため、
+    // AVAudioSession の activate / deactivate を Flutter から制御する。
+    if let hubRegistrar = engineBridge.pluginRegistry.registrar(
+      forPlugin: "HubPlaybackChannel"
+    ) {
+      let channel = FlutterMethodChannel(
+        name: "com.example.local_audio_sync/hubPlayback",
+        binaryMessenger: hubRegistrar.messenger()
+      )
+      channel.setMethodCallHandler { call, result in
+        switch call.method {
+        case "start":
+          AudioSessionManager.shared.activate()
+          result(nil)
+        case "stop":
+          AudioSessionManager.shared.deactivate()
+          result(nil)
+        default:
+          result(FlutterMethodNotImplemented)
+        }
+      }
+    }
   }
 }

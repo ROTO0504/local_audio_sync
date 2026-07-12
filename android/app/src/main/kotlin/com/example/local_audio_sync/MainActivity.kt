@@ -104,6 +104,25 @@ class MainActivity : FlutterActivity() {
                         startService(intent)
                         result.success(null)
                     }
+                    "startHubPlayback" -> {
+                        // Hub(集約・再生)モードのバックグラウンド維持
+                        val intent = Intent(this, HubPlaybackService::class.java).apply {
+                            action = HubPlaybackService.ACTION_START
+                        }
+                        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+                            startForegroundService(intent)
+                        } else {
+                            startService(intent)
+                        }
+                        result.success(null)
+                    }
+                    "stopHubPlayback" -> {
+                        val intent = Intent(this, HubPlaybackService::class.java).apply {
+                            action = HubPlaybackService.ACTION_STOP
+                        }
+                        startService(intent)
+                        result.success(null)
+                    }
                     else -> result.notImplemented()
                 }
             }

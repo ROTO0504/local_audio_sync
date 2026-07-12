@@ -9,6 +9,8 @@
     <uses-permission android:name="android.permission.WAKE_LOCK"/>
     <uses-permission android:name="android.permission.POST_NOTIFICATIONS"/>
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE_MEDIA_PROJECTION"/>
+    <!-- Hub(集約・再生)モードのバックグラウンド再生維持 -->
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_MEDIA_PLAYBACK"/>
 
     <application
         android:label="local_audio_sync"
@@ -37,6 +39,12 @@
         <service
             android:name=".AudioBroadcastService"
             android:foregroundServiceType="mediaProjection"
+            android:exported="false"/>
+
+        <!-- Hub(集約・再生)モードのフォアグラウンド維持 -->
+        <service
+            android:name=".HubPlaybackService"
+            android:foregroundServiceType="mediaPlayback"
             android:exported="false"/>
 
         <meta-data

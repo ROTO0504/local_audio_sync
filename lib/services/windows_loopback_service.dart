@@ -1,6 +1,7 @@
 import 'dart:async';
 import 'dart:ffi';
 import 'dart:io';
+import 'package:audio_mixer_ffi/audio_mixer_ffi.dart';
 import 'package:ffi/ffi.dart';
 import 'package:flutter/foundation.dart';
 import 'pcm_constants.dart';
@@ -31,10 +32,11 @@ class WindowsLoopbackService {
   bool get isRunning => _running;
 
   /// FFI ロード。Windows 以外、または DLL が見つからないときは無効化される。
+  /// (loopback API 自体が WASAPI 専用のため、Windows 限定のまま)
   static void initFfi() {
     if (_ffiReady || !Platform.isWindows) return;
     try {
-      _lib = DynamicLibrary.open('audio_mixer_plugin.dll');
+      _lib = openAudioMixerLibrary();
       _loopbackStart = _lib!
           .lookupFunction<Int32 Function(), int Function()>('loopback_start');
       _loopbackStop = _lib!

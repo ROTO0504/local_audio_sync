@@ -59,17 +59,8 @@ add_subdirectory(${FLUTTER_MANAGED_DIR})
 # Application build; see runner/CMakeLists.txt.
 add_subdirectory("runner")
 
-# Native audio mixer FFI plugin (DLL built from miniaudio + our mixer API).
-add_subdirectory("audio_mixer_plugin")
-
-# Link the runner executable against the plugin so that:
-#   1. The DLL is built before the runner links.
-#   2. The import library is passed to the linker automatically.
-# Flutter FFI callers load the DLL at runtime via dart:ffi, but having an
-# explicit link_libraries here ensures the DLL is copied to the output
-# directory by the install step defined in audio_mixer_plugin/CMakeLists.txt.
-target_link_libraries(${BINARY_NAME} PRIVATE audio_mixer_plugin)
-
+# NOTE: audio_mixer は packages/audio_mixer_ffi の FFI プラグインに移設した。
+# generated_plugins.cmake が自動で add_subdirectory しビルド・バンドルする。
 
 # opus_flutter_windows is Dart-only on Windows. Flutter's CMake generator still
 # calls add_subdirectory on its windows/ path and generated_plugin_registrant.cc

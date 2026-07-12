@@ -1,21 +1,53 @@
 import 'dart:async';
 import 'dart:io';
 import 'package:network_info_plus/network_info_plus.dart';
+import '../models/control_messages.dart';
 
 const int kDiscoveryPort = 9999;
 const int kAudioPort = 7777;
 const String _kBeaconPrefix = 'LAHUB:';
+const String _kBeaconV2Prefix = 'LAHUB2:';
 
-/// Hub のビーコン文字列をパースした結果。
+/// 発見された Hub(ビーコン / mDNS / 手動入力のいずれか由来)。
 class DiscoveredHub {
   final String ip;
   final int port;
   final String name;
 
-  const DiscoveredHub({required this.ip, required this.port, required this.name});
+  /// Hub の永続 ID(プロトコル v2 のみ)。v1 ビーコン由来では null。
+  /// 「前回接続した Hub への優先接続」の判定に使う。
+  final String? hubId;
 
-  /// `LAHUB:{ip}:{port}:{name}` 形式のビーコンをパース。失敗時 null。
+  /// Hub の話すプロトコルバージョン(v1 ビーコン由来では 1)。
+  final int protocolVersion;
+
+  const DiscoveredHub({
+    required this.ip,
+    required this.port,
+    required this.name,
+    this.hubId,
+    this.protocolVersion = kProtocolVersionLegacy,
+  });
+
+  /// `LAHUB:{ip}:{port}:{name}`(v1)または
+  /// `LAHUB2:{ip}:{port}:{name}:{hubId}:{proto}`(v2)をパース。失敗時 null。
   static DiscoveredHub? fromBeacon(String beacon) {
+    if (beacon.startsWith(_kBeaconV2Prefix)) {
+      final parts = beacon.substring(_kBeaconV2Prefix.length).split(':');
+      if (parts.length < 5) return null;
+      final port = int.tryParse(parts[1]);
+      final proto = int.tryParse(parts.last);
+      if (port == null || proto == null) return null;
+      final hubId = parts[parts.length - 2];
+      return DiscoveredHub(
+        ip: parts[0],
+        port: port,
+        // name にコロンが含まれても壊れないよう、末尾 2 要素以外を結合
+        name: parts.sublist(2, parts.length - 2).join(':'),
+        hubId: hubId,
+        protocolVersion: proto,
+      );
+    }
     if (!beacon.startsWith(_kBeaconPrefix)) return null;
     final parts = beacon.substring(_kBeaconPrefix.length).split(':');
     if (parts.length < 3) return null;
@@ -30,6 +62,9 @@ class DiscoveredHub {
 
   String toBeacon(String localName) => '$_kBeaconPrefix$ip:$port:$localName';
 
+  /// v1 ビーコンと v2 ビーコンが交互に届いても「同じ Hub」として dedup できる
+  /// よう、equality には hubId / protocolVersion を含めない(ip/port/name で
+  /// 同一性を判定し、hubId は emit 時の参考情報として扱う)。
   @override
   bool operator ==(Object other) =>
       identical(this, other) ||
@@ -42,28 +77,36 @@ class DiscoveredHub {
   int get hashCode => Object.hash(ip, port, name);
 
   @override
-  String toString() => 'DiscoveredHub(ip=$ip, port=$port, name=$name)';
+  String toString() =>
+      'DiscoveredHub(ip=$ip, port=$port, name=$name, hubId=$hubId, proto=$protocolVersion)';
 }
 
-/// Hub 側: ビーコンを `intervalSeconds` 秒ごとにブロードキャスト送信する。
+/// Hub 側: ビーコンを 2 秒ごとにブロードキャスト送信する。
+///
+/// プロトコル v2 では `LAHUB2:{ip}:{port}:{name}:{hubId}:{proto}` を送り、
+/// 旧クライアント互換のため v1 形式 `LAHUB:{ip}:{port}:{name}` も同じ
+/// ティックで併送する(v2 を先に送るので、新クライアントは通常 v2 を先に拾う)。
 class HubBeaconSender {
   Timer? _timer;
   RawDatagramSocket? _socket;
 
-  Future<void> start(String hubName) async {
-    final localIp = await _getLocalIp();
-    final beaconStr = '$_kBeaconPrefix$localIp:$kAudioPort:$hubName';
-    final beaconBytes = beaconStr.codeUnits;
+  Future<void> start(String hubName, {String? hubId}) async {
+    final localIp = await getLocalIpv4();
+    final beaconV1 = '$_kBeaconPrefix$localIp:$kAudioPort:$hubName'.codeUnits;
+    final beaconV2 = hubId == null
+        ? null
+        : '$_kBeaconV2Prefix$localIp:$kAudioPort:$hubName:$hubId:$kProtocolVersion'
+            .codeUnits;
 
     _socket = await RawDatagramSocket.bind(InternetAddress.anyIPv4, 0);
     _socket!.broadcastEnabled = true;
 
     _timer = Timer.periodic(const Duration(seconds: 2), (_) {
-      _socket?.send(
-        beaconBytes,
-        InternetAddress('255.255.255.255'),
-        kDiscoveryPort,
-      );
+      final target = InternetAddress('255.255.255.255');
+      if (beaconV2 != null) {
+        _socket?.send(beaconV2, target, kDiscoveryPort);
+      }
+      _socket?.send(beaconV1, target, kDiscoveryPort);
     });
   }
 
@@ -225,7 +268,9 @@ class DiscoveryStartException implements Exception {
   String toString() => 'DiscoveryStartException: $message';
 }
 
-Future<String> _getLocalIp() async {
+/// この端末の LAN 向け IPv4 アドレスを返す(見つからなければ 127.0.0.1)。
+/// ビーコンの自 IP 通知と、Hub 画面での手動接続案内表示に使う。
+Future<String> getLocalIpv4() async {
   try {
     final info = NetworkInfo();
     final ip = await info.getWifiIP();
