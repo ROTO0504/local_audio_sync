@@ -703,7 +703,9 @@
 				);
 				PRODUCT_BUNDLE_IDENTIFIER = com.roto0504.localAudioSync;
 				DEVELOPMENT_TEAM = 7H7U867AYF;
-				CODE_SIGN_STYLE = Automatic;
+				CODE_SIGN_STYLE = Manual;
+				CODE_SIGN_IDENTITY = "Apple Distribution";
+				PROVISIONING_PROFILE_SPECIFIER = "Local Audio Sync App Store";
 				PRODUCT_NAME = "$(TARGET_NAME)";
 				SWIFT_OBJC_BRIDGING_HEADER = "Runner/Runner-Bridging-Header.h";
 				SWIFT_VERSION = 5.0;
