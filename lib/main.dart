@@ -20,6 +20,9 @@ void main() async {
   WidgetsFlutterBinding.ensureInitialized();
 
   // Initialize Opus codec (required before creating any encoder/decoder)
+  // opus_dart の条件付き export の都合で analyzer は web_ffi 側の
+  // DynamicLibrary を解決するが、ネイティブ実行時は dart:ffi の型が実体。
+  // ignore: argument_type_not_assignable
   initOpus(await _loadOpus());
 
   runApp(
