@@ -82,6 +82,16 @@ MIXER_API void mixer_remove_client(uint16_t clientId);
 MIXER_API void mixer_destroy(void);
 
 /**
+ * mixer_set_target_latency_ms
+ *
+ * Sets the target playback pre-buffer depth in milliseconds. Playback for a
+ * client does not start until its ring buffer holds at least this much audio,
+ * and re-buffers after an underrun. Higher = more jitter tolerance, more delay.
+ * Clamped to [20, 500] ms. Default 80 ms.
+ */
+MIXER_API void mixer_set_target_latency_ms(int ms);
+
+/**
  * mixer_stats
  *
  * Fills caller-provided int64 slots with per-client diagnostics:

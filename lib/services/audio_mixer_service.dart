@@ -20,6 +20,7 @@ class AudioMixerService {
   static late final _MixerRemoveClient _mixerRemoveClient;
   static late final _MixerDestroy _mixerDestroy;
   static late final _MixerStats _mixerStats;
+  static late final _MixerSetTargetLatency _mixerSetTargetLatency;
 
   static bool _initialized = false;
 
@@ -55,6 +56,9 @@ class AudioMixerService {
       _mixerStats = _lib!.lookupFunction<
           Void Function(Uint16, Pointer<Int64>, Int32),
           void Function(int, Pointer<Int64>, int)>('mixer_stats');
+      _mixerSetTargetLatency = _lib!.lookupFunction<
+          Void Function(Int32),
+          void Function(int)>('mixer_set_target_latency_ms');
 
       _mixerInit();
       _initialized = true;
@@ -107,6 +111,12 @@ class AudioMixerService {
 
   void setVolume(int clientId, double volume) {
     if (_initialized) _mixerSetVolume(clientId, volume.clamp(0.0, 1.0));
+  }
+
+  /// 再生プリバッファ(目標遅延)を ms 単位で設定する。大きいほどジッタ耐性が
+  /// 上がる代わりに遅延が増える。ネイティブ側で [20, 500]ms にクランプされる。
+  void setTargetLatencyMs(int ms) {
+    if (_initialized) _mixerSetTargetLatency(ms);
   }
 
   /// 指定クライアントのジッターバッファ統計スナップショットを返す。
@@ -191,3 +201,4 @@ typedef _MixerSetVolume = void Function(int clientId, double volume);
 typedef _MixerRemoveClient = void Function(int clientId);
 typedef _MixerDestroy = void Function();
 typedef _MixerStats = void Function(int clientId, Pointer<Int64> out, int outLen);
+typedef _MixerSetTargetLatency = void Function(int ms);

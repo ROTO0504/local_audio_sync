@@ -40,6 +40,11 @@ struct ClientState {
     // Whether this slot is currently in use.
     std::atomic<bool> active{false};
 
+    // 再生中フラグ。false のときは「プリバッファ充填待ち」で、リングが
+    // 目標深さ(g_prebufferFrames)に達するまで出力せず溜める。枯渇したら
+    // false に戻して溜め直す(= アンダーランの連鎖を断つ)。
+    std::atomic<bool> playing{false};
+
     // 診断カウンタ(フレーム単位、単調増加)。
     // underrun: 再生要求に対しリングが枯渇し無音で埋めた分。
     // overrun : 書き込み時にリングが満杯で捨てた分。
@@ -54,6 +59,11 @@ struct ClientState {
 static ClientState  g_clients[MAX_CLIENTS];
 static ma_device    g_device;
 static bool         g_deviceInitialized = false;
+
+// プリバッファ / 目標再生バッファ深さ(オーディオフレーム)。再生開始前に
+// この深さまで溜め、枯渇したら溜め直す。ジッタ耐性と遅延のトレードオフ。
+// 既定 80ms。mixer_set_target_latency_ms で変更可能。
+static std::atomic<int> g_prebufferFrames{ (kSampleRate / 1000) * 80 };
 
 // ---------------------------------------------------------------------------
 // Ring-buffer helpers
@@ -96,8 +106,23 @@ static void data_callback(
         ClientState& c = g_clients[ci];
         if (!c.active.load(std::memory_order_acquire)) continue;
 
-        float vol = c.volume.load(std::memory_order_relaxed);
         size_t available = rb_available_read(c);
+
+        // プリバッファゲート: 目標深さに達するまで再生を始めない。到着ジッタで
+        // リングが一瞬枯れても細切れアンダーランを起こさないよう、先に溜める。
+        if (!c.playing.load(std::memory_order_acquire)) {
+            const size_t prebuf =
+                static_cast<size_t>(g_prebufferFrames.load(std::memory_order_relaxed))
+                * kChannels;
+            if (available >= prebuf) {
+                c.playing.store(true, std::memory_order_release);
+            } else {
+                // まだ充填待ち → 今回このクライアントは無音(出力は memset 済み)。
+                continue;
+            }
+        }
+
+        float vol = c.volume.load(std::memory_order_relaxed);
         size_t toRead = std::min(available, totalSamples);
 
         size_t r = c.readHead.load(std::memory_order_relaxed);
@@ -109,10 +134,12 @@ static void data_callback(
 
         c.readHead.store(r % kRingBufSamples, std::memory_order_release);
 
-        // リング枯渇分は無音のまま(memset 済み)。診断のため計上する。
+        // リング枯渇分は無音のまま(memset 済み)。診断のため計上し、再生を
+        // 止めてプリバッファから溜め直す(アンダーランの連鎖を断つ)。
         if (toRead < totalSamples) {
             c.underrunFrames.fetch_add(
                 (totalSamples - toRead) / kChannels, std::memory_order_relaxed);
+            c.playing.store(false, std::memory_order_release);
         }
     }
 
@@ -139,6 +166,7 @@ void mixer_init(void) {
         g_clients[i].readHead.store(0, std::memory_order_relaxed);
         g_clients[i].volume.store(1.0f, std::memory_order_relaxed);
         g_clients[i].active.store(false, std::memory_order_relaxed);
+        g_clients[i].playing.store(false, std::memory_order_relaxed);
         g_clients[i].underrunFrames.store(0, std::memory_order_relaxed);
         g_clients[i].overrunFrames.store(0, std::memory_order_relaxed);
     }
@@ -215,8 +243,15 @@ void mixer_remove_client(uint16_t clientId) {
     c.writeHead.store(0, std::memory_order_relaxed);
     c.readHead.store(0, std::memory_order_relaxed);
     c.volume.store(1.0f, std::memory_order_relaxed);
+    c.playing.store(false, std::memory_order_relaxed);
     c.underrunFrames.store(0, std::memory_order_relaxed);
     c.overrunFrames.store(0, std::memory_order_relaxed);
+}
+
+void mixer_set_target_latency_ms(int ms) {
+    if (ms < 20)  ms = 20;
+    if (ms > 500) ms = 500;
+    g_prebufferFrames.store(ms * (kSampleRate / 1000), std::memory_order_relaxed);
 }
 
 void mixer_stats(uint16_t clientId, int64_t* out, int outLen) {

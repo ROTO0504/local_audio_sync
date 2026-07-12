@@ -124,6 +124,7 @@ class HubController {
     final prefs = await SharedPreferences.getInstance();
     _mixer.jitterPreset =
         JitterBufferPreset.fromName(prefs.getString(_kJitterPresetKey));
+    _mixer.setTargetLatencyMs(_prebufferMsFor(_mixer.jitterPreset));
     _masterVolume = (prefs.getDouble(_kMasterVolumeKey) ?? 1.0).clamp(0.0, 1.0);
 
     final hubId = await _identity.getHubId();
@@ -254,6 +255,7 @@ class HubController {
   Future<void> setJitterPreset(JitterBufferPreset preset) async {
     if (_mixer.jitterPreset == preset) return;
     _mixer.jitterPreset = preset;
+    _mixer.setTargetLatencyMs(_prebufferMsFor(preset));
 
     final prefs = await SharedPreferences.getInstance();
     await prefs.setString(_kJitterPresetKey, preset.name);
@@ -268,6 +270,13 @@ class HubController {
         _mixer.setVolume(entry.value, effectiveVolume(entry.key));
       }
     }
+  }
+
+  /// プリセットに応じた再生プリバッファ(目標遅延, ms)。lan=低遅延 / wan=安定重視。
+  /// 1 フレーム = 20ms。細切れアンダーラン防止のため最低 80ms は確保する。
+  int _prebufferMsFor(JitterBufferPreset preset) {
+    final ms = preset.targetDelayFrames * 20;
+    return ms < 80 ? 80 : ms;
   }
 
   void _handlePing(int clientId) {

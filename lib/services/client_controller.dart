@@ -175,7 +175,7 @@ class ClientController {
       await _discovery.start();
       _discoverySub = _discovery.stream.listen(_onDiscovered);
       _allHubsSub = _discovery.allHubsStream.listen(_upsertHub);
-      _hubLostSub = _discovery.hubLostStream.listen((_) => _onHubLost());
+      _hubLostSub = _discovery.hubLostStream.listen((_) => _onBeaconLost());
       await _mdnsBrowser.start();
       _mdnsSub = _mdnsBrowser.stream.listen(_onDiscovered);
     } catch (e) {
@@ -214,6 +214,20 @@ class ClientController {
     if (_lastHubId != null && hub.hubId == _lastHubId) {
       unawaited(connectTo(hub));
     }
+  }
+
+  /// ビーコン喪失(mDNS / UDP ビーコンが lossTimeout 途絶)時の処理。
+  ///
+  /// 接続中(音声送信・PONG が生きている)なら**切断しない**。ビーコンの間欠は
+  /// 接続断ではなく、ここで切ると 5〜6 秒周期の再接続ループに陥りノイズ・音切れの
+  /// 原因になる。実際の Hub 死は PONG タイムアウト([_onHubLost] を直接呼ぶ
+  /// onHubUnresponsive)で検出する。未接続時のみ再探索状態へ戻す。
+  void _onBeaconLost() {
+    if (_sender.isConnected) {
+      debugPrint('[ClientController] ビーコン途絶だが接続は健全 → 維持');
+      return;
+    }
+    unawaited(_onHubLost());
   }
 
   Future<void> _onHubLost() async {
