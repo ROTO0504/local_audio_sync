@@ -46,16 +46,56 @@ App Store Connect(TestFlight)へアップロードするための手順書です
 3. 名前: 任意(例: Local Audio Sync)※ ストア上でユニークである必要あり
 4. プライマリ言語: 日本語、Bundle ID: `com.roto0504.localAudioSync`、SKU: 任意(例: `local-audio-sync`)
 
+## 1.5. 配布証明書の作成(Mac が必要)
+
+cloud-managed distribution certificate はアクセス権の都合で CI から使えなかったため、
+配布証明書は手動で作成して `.p12` を Secrets に入れる方式にする。**この作業は Mac で行う。**
+
+### 1.5.1 CSR(証明書署名要求)を作る
+
+1. **キーチェーンアクセス**.app を開く
+2. メニュー **キーチェーンアクセス → 証明書アシスタント → 認証局に証明書を要求…**
+3. メールアドレスを入力、通称は任意、**「ディスクに保存」** を選択して CSR(`CertificateSigningRequest.certSigningRequest`)を保存
+   - これでキーチェーンに秘密鍵も作られる
+
+### 1.5.2 Apple Distribution 証明書(iOS/macOS の .app 署名用)
+
+1. [Apple Developer → Certificates](https://developer.apple.com/account/resources/certificates/list) → 「+」
+2. **「Apple Distribution」** を選択 → 続ける
+3. 1.5.1 の CSR をアップロード → 生成された `.cer` をダウンロード
+4. `.cer` をダブルクリックしてキーチェーン(ログイン)に追加
+5. キーチェーンアクセスで **「Apple Distribution: 〜」** を右クリック → **書き出す** → `.p12` 形式、**エクスポートパスワードを設定**して保存
+
+### 1.5.3 Mac Installer Distribution 証明書(macOS の .pkg 署名用 — macOS 配信時のみ)
+
+iOS だけなら不要。macOS も TestFlight に上げるなら:
+
+1. 同じく Certificates → 「+」→ **「Mac Installer Distribution」** → CSR アップロード → `.cer` ダウンロード
+2. キーチェーンに追加 → `.p12` 書き出し(パスワード設定)
+
+### 1.5.4 .p12 を base64 化
+
+```bash
+# ターミナル(Mac)で
+base64 -i AppleDistribution.p12 | pbcopy   # クリップボードにコピー(そのまま Secret に貼る)
+# インストーラ証明書も同様
+base64 -i MacInstaller.p12 | pbcopy
+```
+
 ## 2. GitHub Secrets の登録
 
-リポジトリの **Settings → Secrets and variables → Actions → New repository secret** で 4 つ登録:
+リポジトリの **Settings → Secrets and variables → Actions → New repository secret** で登録:
 
-| Secret 名 | 値 |
-| --- | --- |
-| `ASC_KEY_ID` | 1-1 の Key ID(例: `A1B2C3D4E5`) |
-| `ASC_ISSUER_ID` | 1-1 の Issuer ID(UUID 形式) |
-| `ASC_KEY_P8` | ダウンロードした .p8 ファイルの**中身をテキストのまま**貼り付け(`-----BEGIN PRIVATE KEY-----` から `-----END PRIVATE KEY-----` まで全部) |
-| `APPLE_TEAM_ID` | Team ID(10 桁英数。developer.apple.com → Membership で確認) |
+| Secret 名 | 値 | 対象 |
+| --- | --- | --- |
+| `ASC_KEY_ID` | 1-1 の Key ID(例: `A1B2C3D4E5`) | iOS/macOS |
+| `ASC_ISSUER_ID` | 1-1 の Issuer ID(UUID 形式) | iOS/macOS |
+| `ASC_KEY_P8` | ダウンロードした .p8 ファイルの**中身をテキストのまま**貼り付け(`-----BEGIN PRIVATE KEY-----` から `-----END PRIVATE KEY-----` まで全部) | iOS/macOS |
+| `APPLE_TEAM_ID` | Team ID(10 桁英数) | iOS/macOS |
+| `DIST_CERT_P12_BASE64` | 1.5.2 の Apple Distribution `.p12` の base64 | iOS/macOS |
+| `DIST_CERT_PASSWORD` | その `.p12` のエクスポートパスワード | iOS/macOS |
+| `INSTALLER_CERT_P12_BASE64` | 1.5.3 の Mac Installer `.p12` の base64 | macOS のみ |
+| `INSTALLER_CERT_PASSWORD` | その `.p12` のエクスポートパスワード | macOS のみ |
 
 ## 3. iOS の Broadcast Upload Extension について(重要)
 

@@ -1,14 +1,23 @@
 name: TestFlight
 
 # iOS / macOS を署名付きでビルドし、App Store Connect(TestFlight)へ
-# アップロードする。証明書・Provisioning Profile は Xcode の cloud signing
-# (-allowProvisioningUpdates + App Store Connect API キー)に任せるため、
-# GitHub Secrets は以下の 4 つだけでよい:
+# アップロードする。
 #
-#   ASC_KEY_ID      App Store Connect API キーの Key ID
-#   ASC_ISSUER_ID   同 Issuer ID
-#   ASC_KEY_P8      AuthKey_XXXX.p8 の中身(テキストそのまま)
-#   APPLE_TEAM_ID   Apple Developer の Team ID(10 桁英数)
+# 署名方式:
+#   - 配布証明書は GitHub Secrets に格納した .p12 を keychain へインポートして使う
+#     (cloud-managed distribution certificate はアクセス権の問題で使わない)
+#   - プロビジョニングプロファイルは -allowProvisioningUpdates + App Store Connect
+#     API キーで自動生成させる(プロファイル作成は API キーで問題なく動く)
+#
+# 必要な GitHub Secrets:
+#   ASC_KEY_ID                App Store Connect API キーの Key ID
+#   ASC_ISSUER_ID             同 Issuer ID
+#   ASC_KEY_P8                AuthKey_XXXX.p8 の中身(テキスト)
+#   APPLE_TEAM_ID             Apple Developer の Team ID
+#   DIST_CERT_P12_BASE64      Apple Distribution 証明書 .p12 の base64(iOS/macOS 共通)
+#   DIST_CERT_PASSWORD        その .p12 のエクスポートパスワード
+#   INSTALLER_CERT_P12_BASE64 Mac Installer Distribution 証明書 .p12 の base64(macOS のみ)
+#   INSTALLER_CERT_PASSWORD   その .p12 のエクスポートパスワード
 #
 # 事前準備の詳細は docs/TESTFLIGHT_SETUP.md を参照。
 
@@ -52,17 +61,33 @@ jobs:
           mkdir -p "$HOME/private_keys"
           printf '%s' "$ASC_KEY_P8" > "$HOME/private_keys/AuthKey_${ASC_KEY_ID}.p8"
 
+      - name: Import Apple Distribution certificate
+        env:
+          DIST_CERT_P12_BASE64: ${{ secrets.DIST_CERT_P12_BASE64 }}
+          DIST_CERT_PASSWORD: ${{ secrets.DIST_CERT_PASSWORD }}
+        run: |
+          KEYCHAIN_PATH="$RUNNER_TEMP/app-signing.keychain-db"
+          KEYCHAIN_PASSWORD="$(openssl rand -base64 24)"
+          security create-keychain -p "$KEYCHAIN_PASSWORD" "$KEYCHAIN_PATH"
+          security set-keychain-settings -lut 21600 "$KEYCHAIN_PATH"
+          security unlock-keychain -p "$KEYCHAIN_PASSWORD" "$KEYCHAIN_PATH"
+          printf '%s' "$DIST_CERT_P12_BASE64" | openssl base64 -d -A -out "$RUNNER_TEMP/dist.p12"
+          security import "$RUNNER_TEMP/dist.p12" -P "$DIST_CERT_PASSWORD" -A -t cert -f pkcs12 -k "$KEYCHAIN_PATH"
+          security set-key-partition-list -S apple-tool:,apple:,codesign: -s -k "$KEYCHAIN_PASSWORD" "$KEYCHAIN_PATH" >/dev/null
+          security list-keychain -d user -s "$KEYCHAIN_PATH" login.keychain-db
+          rm -f "$RUNNER_TEMP/dist.p12"
+
       - name: Generate Flutter build config
         # ビルド番号は Run 番号で単調増加させる(TestFlight は重複ビルド番号を拒否する)。
         # --no-codesign で Flutter の証明書チェックを回避する(実署名は後段の
-        # xcodebuild archive が cloud signing で行うため、ここでは不要)。
+        # xcodebuild archive が行うため、ここでは不要)。
         run: flutter build ios --release --config-only --no-codesign --build-number=${{ github.run_number }}
 
       - name: Install CocoaPods
         working-directory: ios
         run: pod install
 
-      - name: Archive (cloud signing)
+      - name: Archive
         run: |
           xcodebuild -workspace ios/Runner.xcworkspace \
             -scheme Runner \
@@ -112,6 +137,28 @@ jobs:
           mkdir -p "$HOME/private_keys"
           printf '%s' "$ASC_KEY_P8" > "$HOME/private_keys/AuthKey_${ASC_KEY_ID}.p8"
 
+      - name: Import distribution certificates
+        # macOS の App Store 配布は .app 署名(Apple Distribution)と .pkg 署名
+        # (Mac Installer Distribution)の 2 証明書が必要。
+        env:
+          DIST_CERT_P12_BASE64: ${{ secrets.DIST_CERT_P12_BASE64 }}
+          DIST_CERT_PASSWORD: ${{ secrets.DIST_CERT_PASSWORD }}
+          INSTALLER_CERT_P12_BASE64: ${{ secrets.INSTALLER_CERT_P12_BASE64 }}
+          INSTALLER_CERT_PASSWORD: ${{ secrets.INSTALLER_CERT_PASSWORD }}
+        run: |
+          KEYCHAIN_PATH="$RUNNER_TEMP/app-signing.keychain-db"
+          KEYCHAIN_PASSWORD="$(openssl rand -base64 24)"
+          security create-keychain -p "$KEYCHAIN_PASSWORD" "$KEYCHAIN_PATH"
+          security set-keychain-settings -lut 21600 "$KEYCHAIN_PATH"
+          security unlock-keychain -p "$KEYCHAIN_PASSWORD" "$KEYCHAIN_PATH"
+          printf '%s' "$DIST_CERT_P12_BASE64" | openssl base64 -d -A -out "$RUNNER_TEMP/dist.p12"
+          security import "$RUNNER_TEMP/dist.p12" -P "$DIST_CERT_PASSWORD" -A -t cert -f pkcs12 -k "$KEYCHAIN_PATH"
+          printf '%s' "$INSTALLER_CERT_P12_BASE64" | openssl base64 -d -A -out "$RUNNER_TEMP/installer.p12"
+          security import "$RUNNER_TEMP/installer.p12" -P "$INSTALLER_CERT_PASSWORD" -A -t cert -f pkcs12 -k "$KEYCHAIN_PATH"
+          security set-key-partition-list -S apple-tool:,apple:,codesign: -s -k "$KEYCHAIN_PASSWORD" "$KEYCHAIN_PATH" >/dev/null
+          security list-keychain -d user -s "$KEYCHAIN_PATH" login.keychain-db
+          rm -f "$RUNNER_TEMP/dist.p12" "$RUNNER_TEMP/installer.p12"
+
       - name: Generate Flutter build config
         run: flutter build macos --release --config-only --build-number=${{ github.run_number }}
 
@@ -119,7 +166,7 @@ jobs:
         working-directory: macos
         run: pod install
 
-      - name: Archive (cloud signing)
+      - name: Archive
         run: |
           xcodebuild -workspace macos/Runner.xcworkspace \
             -scheme Runner \
