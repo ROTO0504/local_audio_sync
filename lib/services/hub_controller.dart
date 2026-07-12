@@ -8,7 +8,11 @@ import '../models/client_info.dart';
 import '../models/control_messages.dart';
 import '../providers/hub_state_provider.dart';
 import 'audio_mixer_service.dart';
+import 'client_settings_store.dart';
+import 'device_identity_service.dart';
 import 'discovery_service.dart';
+import 'hub_background_keeper.dart';
+import 'mdns_discovery_service.dart';
 import 'udp_receiver_service.dart';
 
 /// Hub(集約・再生側)のコアロジック。
@@ -29,22 +33,38 @@ class HubController {
     UdpReceiverService? receiver,
     AudioMixerService? mixer,
     HubBeaconSender? beacon,
+    HubMdnsAdvertiser? mdnsAdvertiser,
+    HubBackgroundKeeper? backgroundKeeper,
+    DeviceIdentityService? identity,
+    ClientSettingsStore? settingsStore,
     Duration staleCheckInterval = const Duration(seconds: 10),
     Duration staleTimeout = const Duration(seconds: 10),
+    Duration vuUpdateInterval = const Duration(milliseconds: 150),
   })  : _receiver = receiver ?? UdpReceiverService(),
         _mixer = mixer ?? AudioMixerService(),
         _beacon = beacon ?? HubBeaconSender(),
+        _mdnsAdvertiser = mdnsAdvertiser ?? HubMdnsAdvertiser(),
+        _backgroundKeeper = backgroundKeeper ?? HubBackgroundKeeper(),
+        _identity = identity ?? DeviceIdentityService(),
+        _settingsStore = settingsStore ?? ClientSettingsStore(),
         _staleCheckInterval = staleCheckInterval,
-        _staleTimeout = staleTimeout;
+        _staleTimeout = staleTimeout,
+        _vuUpdateInterval = vuUpdateInterval;
 
   final Ref _ref;
   final UdpReceiverService _receiver;
   final AudioMixerService _mixer;
   final HubBeaconSender _beacon;
+  final HubMdnsAdvertiser _mdnsAdvertiser;
+  final HubBackgroundKeeper _backgroundKeeper;
+  final DeviceIdentityService _identity;
+  final ClientSettingsStore _settingsStore;
   final Duration _staleCheckInterval;
   final Duration _staleTimeout;
+  final Duration _vuUpdateInterval;
 
   final Map<String, int> _uuidToClientId = {};
+  final Map<String, DateTime> _lastVuUpdate = {};
   int _nextClientId = 1;
   Timer? _staleTimer;
   bool _running = false;
@@ -64,9 +84,16 @@ class HubController {
     _receiver.onClientPing = _handlePing;
     _receiver.onClientBye = _handleBye;
     _receiver.onAudioPacket = _handleAudioPacket;
+    _mixer.onClientLevel = _handleClientLevel;
 
+    final hubId = await _identity.getHubId();
     await _receiver.start();
-    await _beacon.start(hubName);
+    // UDP ビーコン(v1/v2 併送)と mDNS 公開のデュアルスタック。
+    // iOS はブロードキャスト送信不可のため mDNS が唯一の被発見手段になる。
+    await _beacon.start(hubName, hubId: hubId);
+    await _mdnsAdvertiser.start(hubName: hubName, hubId: hubId);
+    // Android FGS / iOS AVAudioSession によるバックグラウンド維持
+    await _backgroundKeeper.start();
 
     _staleTimer = Timer.periodic(_staleCheckInterval, (_) => _checkStale());
   }
@@ -81,10 +108,13 @@ class HubController {
     _receiver.onClientPing = null;
     _receiver.onClientBye = null;
     _receiver.onAudioPacket = null;
+    _mixer.onClientLevel = null;
 
     _staleTimer?.cancel();
     _staleTimer = null;
     _beacon.stop();
+    await _mdnsAdvertiser.stop();
+    await _backgroundKeeper.stop();
     _receiver.stop();
     _mixer.removeAllClients(); // ネイティブ Opus デコーダを全て解放
     AudioMixerService.destroyFfi();
@@ -92,13 +122,22 @@ class HubController {
 
   // ---- 受信ハンドラ ----
 
-  void _handleHello(ClientHello hello, String ip, int port) {
+  Future<void> _handleHello(ClientHello hello, String ip, int port) async {
     final existingId = _uuidToClientId[hello.uuid];
     final id = existingId ?? _nextClientId++;
     _uuidToClientId[hello.uuid] = id;
     _receiver.sendAckHello(ip, port, id);
 
     final existing = _ref.read(hubStateProvider)[hello.uuid];
+
+    // 音量 / ミュートの復元優先順位:
+    //   セッション中の状態(existing)> 永続ストア > デフォルト
+    // ストアを読むのは新規参加(再起動後の再接続を含む)のときだけ。
+    ClientSettings? stored;
+    if (existing == null) {
+      stored = await _settingsStore.load(hello.uuid);
+    }
+    if (!_running) return; // await 中に stop() された場合は何もしない
 
     // 新クライアントは HELLO2 と v1 HELLO を併送してくる(旧 Hub 互換)。
     // 到着順は保証されないため、v1 HELLO が後から届いても platform や
@@ -110,6 +149,9 @@ class HubController {
       protocolVersion = existing.protocolVersion;
     }
 
+    final volume = existing?.volume ?? stored?.volume ?? 1.0;
+    final isMuted = existing?.isMuted ?? stored?.isMuted ?? false;
+
     final client = ClientInfo(
       id: hello.uuid,
       name: hello.name,
@@ -117,8 +159,8 @@ class HubController {
       port: port,
       platform: platform,
       protocolVersion: max(protocolVersion, existing?.protocolVersion ?? 1),
-      volume: existing?.volume ?? 1.0,
-      isMuted: existing?.isMuted ?? false,
+      volume: volume,
+      isMuted: isMuted,
       lastSeen: DateTime.now(),
     );
     _ref.read(hubStateProvider.notifier).addOrUpdateClient(client);
@@ -140,6 +182,8 @@ class HubController {
         }
       },
     );
+    // 復元した音量をネイティブミキサーへ即時反映
+    _mixer.setVolume(id, isMuted ? 0.0 : volume);
   }
 
   void _handlePing(int clientId) {
@@ -170,6 +214,69 @@ class HubController {
     }
     _mixer.setVolume(packet.clientId, volume);
     _mixer.pushEncodedPacket(packet.clientId, packet.sequence, packet.opusBytes);
+  }
+
+  /// ミキサーのデコード済み音声レベル(20ms ごと)を間引いて UI へ反映する。
+  void _handleClientLevel(int clientId, double level) {
+    final uuid = _uuidOf(clientId);
+    if (uuid == null) return;
+    final now = DateTime.now();
+    final last = _lastVuUpdate[uuid];
+    if (last != null && now.difference(last) < _vuUpdateInterval) return;
+    _lastVuUpdate[uuid] = now;
+    _ref.read(hubStateProvider.notifier).updateVuLevel(uuid, level);
+  }
+
+  // ---- UI からの操作 ----
+
+  /// クライアントの音量を変更し、ミキサーへ即時反映 + 永続化する。
+  Future<void> setClientVolume(String uuid, double volume) async {
+    _ref.read(hubStateProvider.notifier).setVolume(uuid, volume);
+    final clientId = _uuidToClientId[uuid];
+    final client = _ref.read(hubStateProvider)[uuid];
+    if (clientId != null && client != null) {
+      _mixer.setVolume(clientId, client.isMuted ? 0.0 : client.volume);
+    }
+    await _persistSettings(uuid);
+  }
+
+  /// クライアントのミュートを切り替え、ミキサーへ即時反映 + 永続化する。
+  Future<void> setClientMuted(String uuid, {required bool muted}) async {
+    _ref.read(hubStateProvider.notifier).setMuted(uuid, muted: muted);
+    final clientId = _uuidToClientId[uuid];
+    final client = _ref.read(hubStateProvider)[uuid];
+    if (clientId != null && client != null) {
+      _mixer.setVolume(clientId, muted ? 0.0 : client.volume);
+    }
+    await _persistSettings(uuid);
+  }
+
+  /// 全クライアントの音量を一括変更する(マスター音量)。
+  Future<void> setMasterVolume(double volume) async {
+    final uuids = _ref.read(hubStateProvider).keys.toList();
+    for (final uuid in uuids) {
+      await setClientVolume(uuid, volume);
+    }
+  }
+
+  /// クライアントを一覧から取り除く(切断済みエントリの整理用)。
+  /// 永続化された音量設定は残るため、再接続すれば復元される。
+  void removeClientEntry(String uuid) {
+    final clientId = _uuidToClientId.remove(uuid);
+    if (clientId != null) {
+      _mixer.removeClient(clientId);
+    }
+    _lastVuUpdate.remove(uuid);
+    _ref.read(hubStateProvider.notifier).removeClient(uuid);
+  }
+
+  Future<void> _persistSettings(String uuid) async {
+    final client = _ref.read(hubStateProvider)[uuid];
+    if (client == null) return;
+    await _settingsStore.save(
+      uuid,
+      ClientSettings(volume: client.volume, isMuted: client.isMuted),
+    );
   }
 
   // ---- stale 監視 ----

@@ -1,5 +1,3 @@
-import 'dart:typed_data';
-
 class ClientInfo {
   final String id;
   final String name;
@@ -16,7 +14,9 @@ class ClientInfo {
   final bool isMuted;
   final bool isActive;
   final DateTime lastSeen;
-  final Float32List? lastPcmChunk; // for VU meter on hub
+
+  /// 受信音声の RMS レベル(0.0〜1.0)。Hub 側の VU メーター表示用。
+  final double vuLevel;
 
   const ClientInfo({
     required this.id,
@@ -29,7 +29,7 @@ class ClientInfo {
     this.isMuted = false,
     this.isActive = true,
     required this.lastSeen,
-    this.lastPcmChunk,
+    this.vuLevel = 0.0,
   });
 
   ClientInfo copyWith({
@@ -43,7 +43,7 @@ class ClientInfo {
     bool? isMuted,
     bool? isActive,
     DateTime? lastSeen,
-    Float32List? lastPcmChunk,
+    double? vuLevel,
   }) {
     return ClientInfo(
       id: id ?? this.id,
@@ -56,7 +56,7 @@ class ClientInfo {
       isMuted: isMuted ?? this.isMuted,
       isActive: isActive ?? this.isActive,
       lastSeen: lastSeen ?? this.lastSeen,
-      lastPcmChunk: lastPcmChunk ?? this.lastPcmChunk,
+      vuLevel: vuLevel ?? this.vuLevel,
     );
   }
 }

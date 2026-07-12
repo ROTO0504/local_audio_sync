@@ -51,6 +51,15 @@ class HubStateNotifier extends Notifier<Map<String, ClientInfo>> {
     };
   }
 
+  void updateVuLevel(String clientId, double level) {
+    final client = state[clientId];
+    if (client == null) return;
+    state = {
+      ...state,
+      clientId: client.copyWith(vuLevel: level.clamp(0.0, 1.0)),
+    };
+  }
+
   void setMasterVolumeAll(double volume) {
     state = {
       for (final entry in state.entries)

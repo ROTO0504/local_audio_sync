@@ -4,6 +4,7 @@ import 'package:ffi/ffi.dart';
 import 'dart:typed_data';
 import 'jitter_buffer.dart';
 import 'opus_decoder_service.dart';
+import 'pcm_constants.dart';
 
 /// Dart-side orchestrator for the audio mixer FFI plugin.
 ///
@@ -23,6 +24,10 @@ class AudioMixerService {
   // Per-client state
   final Map<int, JitterBuffer> _jitterBuffers = {};
   final Map<int, OpusDecoderService> _decoders = {};
+
+  /// デコード済み音声の RMS レベル通知(Hub の VU メーター用)。
+  /// 20ms フレームごとに呼ばれるため、UI へ反映する側でスロットリングすること。
+  void Function(int clientId, double level)? onClientLevel;
 
   static void initFfi() {
     if (_initialized) return;
@@ -105,7 +110,10 @@ class AudioMixerService {
       } else {
         pcm = dec.decodePLC();
       }
-      if (pcm == null || !_initialized) continue;
+      if (pcm == null) continue;
+      // ネイティブミキサーが無効(未対応環境)でも VU レベルは通知する
+      onClientLevel?.call(clientId, computeFloat32RmsLevel(pcm));
+      if (!_initialized) continue;
       _pushToFfi(clientId, pcm);
     }
   }
