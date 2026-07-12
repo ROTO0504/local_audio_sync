@@ -20,7 +20,7 @@ import 'package:flutter/services.dart';
 /// `SizedBox.shrink()` を返す)。
 class BroadcastPickerButton extends StatelessWidget {
   /// `RPSystemBroadcastPickerView.preferredExtension` に渡すバンドル ID。
-  /// 例: `com.example.localAudioSync.BroadcastExtension`
+  /// 例: `com.roto0504.localAudioSync.BroadcastExtension`
   final String preferredExtensionBundleId;
 
   /// ボタンの大きさ。`RPSystemBroadcastPickerView` 本体のサイズと一致させる。

@@ -253,7 +253,7 @@ flutter run -d macos
 
 - メインアプリ ↔ Extension 間は App Group コンテナ内の **UNIX Domain Socket(SOCK_DGRAM)** で PCM を転送
 - Extension の 50MB メモリ制限を守るため、**エンコードや UDP 送信は Extension 側で行わず、メインアプリ側に集約**
-- Extension の bundle ID(既定:`com.example.localAudioSync.BroadcastExtension`)はメインアプリ側の `client_screen.dart` で参照しているので、Xcode で Bundle ID を変えた場合は `_broadcastExtensionBundleId` 定数も更新
+- Extension の bundle ID(既定:`com.roto0504.localAudioSync.BroadcastExtension`)はメインアプリ側の `client_screen.dart` で参照しているので、Xcode で Bundle ID を変えた場合は `_broadcastExtensionBundleId` 定数も更新
 
 ### Windows の詳細
 
@@ -529,7 +529,7 @@ fix/*      ← バグ修正
 
 ### iOS で「ブロードキャスト開始」を押しても音が来ない
 
-- App Group の設定がメインアプリと Extension で一致しているか確認(`group.com.example.local_audio_sync`)
+- App Group の設定がメインアプリと Extension で一致しているか確認(`group.com.roto0504.localAudioSync`)
 - 一度アプリを完全にアンインストールしてから再インストール
 - DRM 保護コンテンツ(Apple Music / Netflix 等)は仕様上取得できません
 - 詳細は [docs/iOS_BROADCAST_SETUP.md のトラブルシューティング](docs/iOS_BROADCAST_SETUP.md#トラブルシューティング)参照

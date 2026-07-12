@@ -19,7 +19,7 @@ import Darwin
 class SampleHandler: RPBroadcastSampleHandler {
 
     /// App Group 識別子(メインアプリと同じ値にする)。
-    private let appGroupId = "group.com.example.local_audio_sync"
+    private let appGroupId = "group.com.roto0504.localAudioSync"
 
     /// ソケットファイル名(コンテナ直下に配置)。
     private let socketName = "audio.sock"

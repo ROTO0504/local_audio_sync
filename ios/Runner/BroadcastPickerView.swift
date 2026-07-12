@@ -10,7 +10,7 @@ import UIKit
 /// 利用方法(Dart 側):
 ///   UiKitView(
 ///     viewType: 'com.example.local_audio_sync/broadcastPicker',
-///     creationParams: { 'preferredExtension': 'com.example.localAudioSync.BroadcastExtension' },
+///     creationParams: { 'preferredExtension': 'com.roto0504.localAudioSync.BroadcastExtension' },
 ///     creationParamsCodec: const StandardMessageCodec(),
 ///   )
 ///

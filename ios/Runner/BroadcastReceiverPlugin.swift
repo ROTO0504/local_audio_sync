@@ -19,7 +19,7 @@ import Darwin
 
     // MARK: - 設定
 
-    private let appGroupId = "group.com.example.local_audio_sync"
+    private let appGroupId = "group.com.roto0504.localAudioSync"
     private let socketName = "audio.sock"
 
     /// EventChannel の sink。UI スレッドで触る。

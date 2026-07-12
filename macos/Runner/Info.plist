@@ -28,6 +28,9 @@
 	<string>MainMenu</string>
 	<key>NSPrincipalClass</key>
 	<string>NSApplication</string>
+	<!-- 独自暗号は不使用(平文 UDP + Opus)。TestFlight の輸出コンプライアンス質問を省略 -->
+	<key>ITSAppUsesNonExemptEncryption</key>
+	<false/>
 	<!-- ScreenCaptureKit 経由で他アプリの音声を取得するため -->
 	<key>NSScreenCaptureUsageDescription</key>
 	<string>このデバイスで再生中の音声を取得し、ローカルネットワーク内のハブへ配信するために画面キャプチャを使用します。</string>

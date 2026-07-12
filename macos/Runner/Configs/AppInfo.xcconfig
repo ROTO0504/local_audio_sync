@@ -8,7 +8,7 @@
 PRODUCT_NAME = local_audio_sync
 
 // The application's bundle identifier
-PRODUCT_BUNDLE_IDENTIFIER = com.example.localAudioSync
+PRODUCT_BUNDLE_IDENTIFIER = com.roto0504.localAudioSync
 
 // The copyright displayed in application information
-PRODUCT_COPYRIGHT = Copyright © 2026 com.example. All rights reserved.
+PRODUCT_COPYRIGHT = Copyright © 2026 roto0504. All rights reserved.

@@ -22,7 +22,7 @@ import '../widgets/vu_meter.dart';
 /// Xcode でターゲットを作成するとき同じ値を Bundle Identifier に設定すること。
 /// docs/iOS_BROADCAST_SETUP.md 参照。
 const _broadcastExtensionBundleId =
-    'com.example.localAudioSync.BroadcastExtension';
+    'com.roto0504.localAudioSync.BroadcastExtension';
 
 const _broadcastChannel = MethodChannel('com.example.local_audio_sync/broadcast');
 
