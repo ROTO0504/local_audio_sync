@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
+import '../models/control_messages.dart';
 import '../providers/app_mode_provider.dart';
 import '../providers/hub_state_provider.dart';
 import '../services/discovery_service.dart';
@@ -25,6 +26,7 @@ class _HubScreenState extends ConsumerState<HubScreen> {
   void initState() {
     super.initState();
     _controller = ref.read(hubControllerProvider);
+    _controller.onCommandDeliveryFailed = _onCommandDeliveryFailed;
     _controller.start(ref.read(deviceNameProvider));
     getLocalIpv4().then((ip) {
       if (mounted) setState(() => _localIp = ip);
@@ -33,8 +35,23 @@ class _HubScreenState extends ConsumerState<HubScreen> {
 
   @override
   void dispose() {
+    _controller.onCommandDeliveryFailed = null;
     _controller.stop();
     super.dispose();
+  }
+
+  void _onCommandDeliveryFailed(String uuid, RemoteCommandAction action) {
+    if (!mounted) return;
+    final client = ref.read(hubStateProvider)[uuid];
+    final name = client?.name ?? uuid;
+    final label = switch (action) {
+      RemoteCommandAction.pause => '一時停止',
+      RemoteCommandAction.resume => '再開',
+      RemoteCommandAction.stop => '停止',
+    };
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(content: Text('$name への$label指示が届きませんでした')),
+    );
   }
 
   @override
@@ -66,6 +83,12 @@ class _HubScreenState extends ConsumerState<HubScreen> {
               setState(() => _masterVolume = v);
               _controller.setMasterVolume(v);
             },
+            onPauseAll:
+                activeCount == 0 ? null : () => _controller.pauseAll(),
+            onResumeAll:
+                clients.values.any((c) => c.isActive && c.isPaused)
+                    ? () => _controller.resumeAll()
+                    : null,
           ),
           Expanded(
             child: clients.isEmpty
@@ -132,7 +155,7 @@ class _HubScreenState extends ConsumerState<HubScreen> {
   }
 }
 
-/// 自 IP・接続数・マスター音量をまとめたヘッダ。
+/// 自 IP・接続数・マスター音量・一括操作をまとめたヘッダ。
 class _HubHeader extends StatelessWidget {
   final String? localIp;
   final int port;
@@ -140,6 +163,8 @@ class _HubHeader extends StatelessWidget {
   final int totalCount;
   final double masterVolume;
   final ValueChanged<double> onMasterVolumeChanged;
+  final VoidCallback? onPauseAll;
+  final VoidCallback? onResumeAll;
 
   const _HubHeader({
     required this.localIp,
@@ -148,6 +173,8 @@ class _HubHeader extends StatelessWidget {
     required this.totalCount,
     required this.masterVolume,
     required this.onMasterVolumeChanged,
+    required this.onPauseAll,
+    required this.onResumeAll,
   });
 
   @override
@@ -173,6 +200,19 @@ class _HubHeader extends StatelessWidget {
                     ? 'クライアント待機中'
                     : '接続中 $activeCount / $totalCount 台',
                 style: const TextStyle(fontSize: 12, color: Colors.grey),
+              ),
+              const SizedBox(width: 4),
+              IconButton(
+                icon: const Icon(Icons.pause_circle_outline, size: 20),
+                tooltip: '全員の配信を一時停止',
+                visualDensity: VisualDensity.compact,
+                onPressed: onPauseAll,
+              ),
+              IconButton(
+                icon: const Icon(Icons.play_circle_outline, size: 20),
+                tooltip: '全員の配信を再開',
+                visualDensity: VisualDensity.compact,
+                onPressed: onResumeAll,
               ),
             ],
           ),

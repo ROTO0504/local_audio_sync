@@ -13,6 +13,9 @@ class ClientInfo {
   final double volume; // 0.0 - 1.0
   final bool isMuted;
   final bool isActive;
+
+  /// Hub からのリモート制御(PAUSE)で配信を一時停止中かどうか。
+  final bool isPaused;
   final DateTime lastSeen;
 
   /// 受信音声の RMS レベル(0.0〜1.0)。Hub 側の VU メーター表示用。
@@ -28,6 +31,7 @@ class ClientInfo {
     this.volume = 1.0,
     this.isMuted = false,
     this.isActive = true,
+    this.isPaused = false,
     required this.lastSeen,
     this.vuLevel = 0.0,
   });
@@ -42,6 +46,7 @@ class ClientInfo {
     double? volume,
     bool? isMuted,
     bool? isActive,
+    bool? isPaused,
     DateTime? lastSeen,
     double? vuLevel,
   }) {
@@ -55,6 +60,7 @@ class ClientInfo {
       volume: volume ?? this.volume,
       isMuted: isMuted ?? this.isMuted,
       isActive: isActive ?? this.isActive,
+      isPaused: isPaused ?? this.isPaused,
       lastSeen: lastSeen ?? this.lastSeen,
       vuLevel: vuLevel ?? this.vuLevel,
     );

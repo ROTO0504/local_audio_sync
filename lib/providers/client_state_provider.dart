@@ -13,6 +13,9 @@ class ClientState {
   final double vuLevel; // 0.0 - 1.0, for VU meter
   final bool isBroadcasting;
 
+  /// Hub からのリモート制御(PAUSE / STOP)で配信を止められているか。
+  final bool isPausedByHub;
+
   const ClientState({
     this.status = ClientConnectionStatus.searching,
     this.hubIp,
@@ -21,6 +24,7 @@ class ClientState {
     this.assignedClientId,
     this.vuLevel = 0.0,
     this.isBroadcasting = false,
+    this.isPausedByHub = false,
   });
 
   ClientState copyWith({
@@ -31,6 +35,7 @@ class ClientState {
     String? assignedClientId,
     double? vuLevel,
     bool? isBroadcasting,
+    bool? isPausedByHub,
   }) {
     return ClientState(
       status: status ?? this.status,
@@ -40,6 +45,7 @@ class ClientState {
       assignedClientId: assignedClientId ?? this.assignedClientId,
       vuLevel: vuLevel ?? this.vuLevel,
       isBroadcasting: isBroadcasting ?? this.isBroadcasting,
+      isPausedByHub: isPausedByHub ?? this.isPausedByHub,
     );
   }
 }
@@ -78,6 +84,10 @@ class ClientStateNotifier extends Notifier<ClientState> {
 
   void updateVuLevel(double level) {
     state = state.copyWith(vuLevel: level.clamp(0.0, 1.0));
+  }
+
+  void setPausedByHub(bool paused) {
+    state = state.copyWith(isPausedByHub: paused, vuLevel: paused ? 0.0 : null);
   }
 }
 

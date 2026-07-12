@@ -71,6 +71,10 @@ class HubController {
 
   bool get isRunning => _running;
 
+  /// CMD を最大回数再送しても届かなかったときに UI へ通知する。
+  /// (uuid, 失敗したコマンド)を渡す。
+  void Function(String uuid, RemoteCommandAction action)? onCommandDeliveryFailed;
+
   /// テスト・デバッグ用: uuid に割り当てたセッション内 clientId を返す。
   int? clientIdOf(String uuid) => _uuidToClientId[uuid];
 
@@ -84,6 +88,7 @@ class HubController {
     _receiver.onClientPing = _handlePing;
     _receiver.onClientBye = _handleBye;
     _receiver.onAudioPacket = _handleAudioPacket;
+    _receiver.onCommandFailed = _handleCommandFailed;
     _mixer.onClientLevel = _handleClientLevel;
 
     final hubId = await _identity.getHubId();
@@ -108,6 +113,7 @@ class HubController {
     _receiver.onClientPing = null;
     _receiver.onClientBye = null;
     _receiver.onAudioPacket = null;
+    _receiver.onCommandFailed = null;
     _mixer.onClientLevel = null;
 
     _staleTimer?.cancel();
@@ -210,6 +216,11 @@ class HubController {
       final client = _ref.read(hubStateProvider)[uuid];
       if (client != null) {
         volume = client.isMuted ? 0.0 : client.volume;
+        // 一時停止中のはずのクライアントから音声が来た = クライアント側の
+        // ローカル操作で再開された(後勝ちルール)。Hub の表示も追従する。
+        if (client.isPaused) {
+          _ref.read(hubStateProvider.notifier).setPaused(uuid, paused: false);
+        }
       }
     }
     _mixer.setVolume(packet.clientId, volume);
@@ -277,6 +288,74 @@ class HubController {
       uuid,
       ClientSettings(volume: client.volume, isMuted: client.isMuted),
     );
+  }
+
+  // ---- リモート制御(Hub → Client) ----
+
+  /// クライアントの配信を一時停止する(送信ゲートを閉じさせる)。
+  /// 状態は楽観的に反映し、CMD が届かなければ onCommandDeliveryFailed で戻す。
+  void pauseClient(String uuid) =>
+      _sendCommandTo(uuid, RemoteCommandAction.pause);
+
+  /// クライアントの配信を再開する。
+  void resumeClient(String uuid) =>
+      _sendCommandTo(uuid, RemoteCommandAction.resume);
+
+  /// クライアントの配信自体を停止させる(キャプチャ停止)。
+  /// iOS は Broadcast Extension を直接止められないため送信停止のみ保証。
+  void stopClient(String uuid) =>
+      _sendCommandTo(uuid, RemoteCommandAction.stop);
+
+  /// アクティブな全クライアントを一時停止する。
+  void pauseAll() {
+    for (final client in _ref.read(hubStateProvider).values) {
+      if (client.isActive && !client.isPaused) {
+        pauseClient(client.id);
+      }
+    }
+  }
+
+  /// 一時停止中の全クライアントを再開する。
+  void resumeAll() {
+    for (final client in _ref.read(hubStateProvider).values) {
+      if (client.isActive && client.isPaused) {
+        resumeClient(client.id);
+      }
+    }
+  }
+
+  void _sendCommandTo(String uuid, RemoteCommandAction action) {
+    final client = _ref.read(hubStateProvider)[uuid];
+    final clientId = _uuidToClientId[uuid];
+    if (client == null || clientId == null) return;
+    // v1 クライアントは CMD を解釈できないので送らない
+    if (client.protocolVersion < 2) {
+      onCommandDeliveryFailed?.call(uuid, action);
+      return;
+    }
+    _receiver.sendCommand(clientId, action, client.ip, client.port);
+    // 楽観的に UI へ反映(未達なら _handleCommandFailed で戻す)
+    switch (action) {
+      case RemoteCommandAction.pause:
+      case RemoteCommandAction.stop:
+        _ref.read(hubStateProvider.notifier).setPaused(uuid, paused: true);
+      case RemoteCommandAction.resume:
+        _ref.read(hubStateProvider.notifier).setPaused(uuid, paused: false);
+    }
+  }
+
+  /// CMD の再送が尽きた(クライアントに届かなかった)。楽観反映を戻す。
+  void _handleCommandFailed(RemoteCommand command) {
+    final uuid = _uuidOf(command.clientId);
+    if (uuid == null) return;
+    switch (command.action) {
+      case RemoteCommandAction.pause:
+      case RemoteCommandAction.stop:
+        _ref.read(hubStateProvider.notifier).setPaused(uuid, paused: false);
+      case RemoteCommandAction.resume:
+        _ref.read(hubStateProvider.notifier).setPaused(uuid, paused: true);
+    }
+    onCommandDeliveryFailed?.call(uuid, command.action);
   }
 
   // ---- stale 監視 ----

@@ -360,6 +360,80 @@ void main() {
       }
     });
 
+    test('CMD PAUSE で送信ゲートが閉じ、RESUME で seq 0 から再開する', () async {
+      final hub = _MockHub()..ackClientId = 26;
+      final sender = UdpSenderService();
+      try {
+        final port = await hub.start();
+        await sender.connect(
+          '127.0.0.1',
+          port,
+          'tester',
+          'uuid-gate',
+          platform: 'windows',
+        );
+
+        // 通常送信で seq が進む
+        sender.sendAudio(Uint8List.fromList([0x01]));
+        sender.sendAudio(Uint8List.fromList([0x02]));
+        await Future<void>.delayed(const Duration(milliseconds: 80));
+        expect(hub.receivedSeqs, equals([0, 1]));
+        expect(sender.isPaused, isFalse);
+
+        // PAUSE 受信 → 送信されなくなる
+        hub.sendCommandTo(26, 1, 'PAUSE');
+        await Future<void>.delayed(const Duration(milliseconds: 80));
+        expect(sender.isPaused, isTrue);
+
+        hub.receivedSeqs.clear();
+        sender.sendAudio(Uint8List.fromList([0x03]));
+        await Future<void>.delayed(const Duration(milliseconds: 80));
+        expect(hub.receivedSeqs, isEmpty);
+
+        // RESUME 受信 → seq 0 から再開
+        hub.sendCommandTo(26, 2, 'RESUME');
+        await Future<void>.delayed(const Duration(milliseconds: 80));
+        expect(sender.isPaused, isFalse);
+
+        sender.sendAudio(Uint8List.fromList([0x04]));
+        await Future<void>.delayed(const Duration(milliseconds: 80));
+        expect(hub.receivedSeqs, equals([0]));
+      } finally {
+        sender.disconnect();
+        hub.stop();
+      }
+    });
+
+    test('CMD STOP でも送信ゲートが閉じ、ローカルの setPaused(false) で再開できる', () async {
+      final hub = _MockHub()..ackClientId = 27;
+      final sender = UdpSenderService();
+      try {
+        final port = await hub.start();
+        await sender.connect(
+          '127.0.0.1',
+          port,
+          'tester',
+          'uuid-stop',
+          platform: 'windows',
+        );
+
+        hub.sendCommandTo(27, 1, 'STOP');
+        await Future<void>.delayed(const Duration(milliseconds: 80));
+        expect(sender.isPaused, isTrue);
+
+        // ローカル操作の再開(後勝ちルール)
+        sender.setPaused(false);
+        expect(sender.isPaused, isFalse);
+
+        sender.sendAudio(Uint8List.fromList([0x05]));
+        await Future<void>.delayed(const Duration(milliseconds: 80));
+        expect(hub.receivedSeqs, equals([0])); // seq はリセット済み
+      } finally {
+        sender.disconnect();
+        hub.stop();
+      }
+    });
+
     test('PONG が途絶えると onHubUnresponsive が一度だけ発火する', () async {
       final hub = _MockHub()
         ..ackClientId = 25

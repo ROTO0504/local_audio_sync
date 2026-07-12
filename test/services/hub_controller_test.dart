@@ -22,6 +22,9 @@ class _FakeReceiver extends UdpReceiverService {
   bool stopped = false;
   final List<(String ip, int port, int id)> ackHellos = [];
   final List<(String ip, int port, int id)> resyncs = [];
+  final List<(int clientId, RemoteCommandAction action, String ip, int port)>
+      sentCommands = [];
+  int _nextCommandSeq = 1;
 
   @override
   Future<void> start() async {
@@ -41,6 +44,17 @@ class _FakeReceiver extends UdpReceiverService {
   @override
   void sendResync(String ip, int port, int clientId) {
     resyncs.add((ip, port, clientId));
+  }
+
+  @override
+  int sendCommand(
+    int clientId,
+    RemoteCommandAction action,
+    String ip,
+    int port,
+  ) {
+    sentCommands.add((clientId, action, ip, port));
+    return _nextCommandSeq++;
   }
 }
 
@@ -478,6 +492,119 @@ void main() {
       expect(
         container.read(hubStateProvider)['uuid-a']!.vuLevel,
         closeTo(0.2, 0.001),
+      );
+    });
+  });
+
+  group('HubController リモート制御', () {
+    test('pauseClient で CMD が送られ isPaused が楽観反映される', () async {
+      await startController();
+      await sendHello(helloV2('uuid-a'), '10.0.0.1', 1111);
+      final id = controller.clientIdOf('uuid-a')!;
+
+      controller.pauseClient('uuid-a');
+
+      expect(receiver.sentCommands, hasLength(1));
+      final sent = receiver.sentCommands.single;
+      expect(sent.$1, id);
+      expect(sent.$2, RemoteCommandAction.pause);
+      expect(sent.$3, '10.0.0.1');
+      expect(container.read(hubStateProvider)['uuid-a']!.isPaused, isTrue);
+
+      controller.resumeClient('uuid-a');
+      expect(container.read(hubStateProvider)['uuid-a']!.isPaused, isFalse);
+    });
+
+    test('v1 クライアントには CMD を送らず失敗通知する', () async {
+      await startController();
+      await sendHello(
+        const ClientHello(name: 'Old', uuid: 'uuid-old'),
+        '10.0.0.9',
+        9999,
+      );
+      final failures = <(String, RemoteCommandAction)>[];
+      controller.onCommandDeliveryFailed = (uuid, action) {
+        failures.add((uuid, action));
+      };
+
+      controller.pauseClient('uuid-old');
+
+      expect(receiver.sentCommands, isEmpty);
+      expect(failures, [('uuid-old', RemoteCommandAction.pause)]);
+      expect(
+        container.read(hubStateProvider)['uuid-old']!.isPaused,
+        isFalse,
+      );
+    });
+
+    test('CMD 未達(再送尽き)で楽観反映が戻り通知される', () async {
+      await startController();
+      await sendHello(helloV2('uuid-a'), '10.0.0.1', 1111);
+      final id = controller.clientIdOf('uuid-a')!;
+      final failures = <(String, RemoteCommandAction)>[];
+      controller.onCommandDeliveryFailed = (uuid, action) {
+        failures.add((uuid, action));
+      };
+
+      controller.pauseClient('uuid-a');
+      expect(container.read(hubStateProvider)['uuid-a']!.isPaused, isTrue);
+
+      // 再送キューが諦めたことを模擬
+      receiver.onCommandFailed!(RemoteCommand(
+        clientId: id,
+        commandSeq: 1,
+        action: RemoteCommandAction.pause,
+      ));
+
+      expect(container.read(hubStateProvider)['uuid-a']!.isPaused, isFalse);
+      expect(failures, [('uuid-a', RemoteCommandAction.pause)]);
+    });
+
+    test('一時停止中のクライアントから音声が届いたら isPaused を解除する(後勝ち)', () async {
+      await startController();
+      await sendHello(helloV2('uuid-a'), '10.0.0.1', 1111);
+      final id = controller.clientIdOf('uuid-a')!;
+
+      controller.pauseClient('uuid-a');
+      expect(container.read(hubStateProvider)['uuid-a']!.isPaused, isTrue);
+
+      // クライアント側ローカル操作で再開され、音声が再び届いた
+      receiver.onAudioPacket!(
+        AudioPacket(
+          clientId: id,
+          sequence: 0,
+          opusBytes: Uint8List.fromList([1]),
+        ),
+        '10.0.0.1',
+      );
+
+      expect(container.read(hubStateProvider)['uuid-a']!.isPaused, isFalse);
+    });
+
+    test('pauseAll / resumeAll はアクティブな v2 クライアントに一括送信する', () async {
+      await startController();
+      await sendHello(helloV2('uuid-a'), '10.0.0.1', 1111);
+      await sendHello(helloV2('uuid-b'), '10.0.0.2', 2222);
+
+      controller.pauseAll();
+      expect(
+        receiver.sentCommands.where((c) => c.$2 == RemoteCommandAction.pause),
+        hasLength(2),
+      );
+      final state = container.read(hubStateProvider);
+      expect(state.values.every((c) => c.isPaused), isTrue);
+
+      controller.resumeAll();
+      expect(
+        receiver.sentCommands.where((c) => c.$2 == RemoteCommandAction.resume),
+        hasLength(2),
+      );
+      expect(
+        container
+            .read(hubStateProvider)
+            .values
+            .every((c) => !c.isPaused),
+        isTrue,
       );
     });
   });

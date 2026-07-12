@@ -60,6 +60,16 @@ class HubStateNotifier extends Notifier<Map<String, ClientInfo>> {
     };
   }
 
+  void setPaused(String clientId, {required bool paused}) {
+    final client = state[clientId];
+    if (client == null) return;
+    state = {
+      ...state,
+      // 一時停止中は音声が来なくなるので VU も落とす
+      clientId: client.copyWith(isPaused: paused, vuLevel: paused ? 0.0 : null),
+    };
+  }
+
   void setMasterVolumeAll(double volume) {
     state = {
       for (final entry in state.entries)

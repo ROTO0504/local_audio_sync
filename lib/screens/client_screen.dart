@@ -3,6 +3,7 @@ import 'dart:io';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
+import '../models/control_messages.dart';
 import '../providers/app_mode_provider.dart';
 import '../providers/client_state_provider.dart';
 import '../services/device_identity_service.dart';
@@ -60,10 +61,9 @@ class _ClientScreenState extends ConsumerState<ClientScreen> {
     });
     // v2 Hub の PONG が途絶えたら、ビーコン喪失と同じ経路で再探索に戻す。
     _sender.onHubUnresponsive = () => _onHubLost();
-    // リモート制御(PAUSE/RESUME/STOP)の実動作はフェーズ 4 で実装する。
-    _sender.onRemoteCommand = (action) {
-      debugPrint('[ClientScreen] リモート制御コマンド受信: ${action.wire}');
-    };
+    // Hub からのリモート制御。送信ゲートの開閉は UdpSenderService 内で
+    // 処理済みなので、ここでは UI 状態とキャプチャの停止だけを行う。
+    _sender.onRemoteCommand = _onRemoteCommand;
     _startDiscovery();
     if (Platform.isIOS) {
       // iOS では実際の音が来るのは Picker でユーザーがブロードキャストを
@@ -183,6 +183,50 @@ class _ClientScreenState extends ConsumerState<ClientScreen> {
     }
   }
 
+  void _onRemoteCommand(RemoteCommandAction action) {
+    if (!mounted) return;
+    final notifier = ref.read(clientStateProvider.notifier);
+    switch (action) {
+      case RemoteCommandAction.pause:
+        notifier.setPausedByHub(true);
+        _showSnack('Hub が配信を一時停止しました');
+      case RemoteCommandAction.resume:
+        notifier.setPausedByHub(false);
+        _showSnack('Hub が配信を再開しました');
+      case RemoteCommandAction.stop:
+        notifier.setPausedByHub(true);
+        // iOS は Broadcast Extension を App 側から止められない(Picker 制約)
+        // ため送信ゲートの閉止のみ。他 OS はキャプチャ自体を停止する。
+        if (!Platform.isIOS) {
+          _stopCaptureOnly();
+        }
+        _showSnack('Hub が配信を停止しました');
+    }
+  }
+
+  /// キャプチャだけを止める(Hub との接続・PING は維持)。
+  Future<void> _stopCaptureOnly() async {
+    if (Platform.isAndroid) {
+      try {
+        await _broadcastChannel.invokeMethod('stopBroadcast');
+      } catch (_) {}
+    }
+    await _captureSub?.cancel();
+    _captureSub = null;
+    await _capture.stop();
+  }
+
+  /// Hub による一時停止/停止からローカル操作で配信を再開する(後勝ち)。
+  Future<void> _resumeFromHubPause() async {
+    _sender.setPaused(false);
+    ref.read(clientStateProvider.notifier).setPausedByHub(false);
+    // STOP でキャプチャごと止まっている場合は取り直す(iOS は Extension が
+    // 生きていればゲート開放だけで音が流れ始める)
+    if (!Platform.isIOS && _captureSub == null) {
+      await _startCapturePipeline();
+    }
+  }
+
   Future<void> _stop() async {
     if (Platform.isAndroid) {
       try {
@@ -246,6 +290,10 @@ class _ClientScreenState extends ConsumerState<ClientScreen> {
               VuMeter(level: state.vuLevel, width: 48, height: 140),
               const SizedBox(height: 24),
               ConnectionStatusBadge(status: state.status),
+              if (state.isPausedByHub) ...[
+                const SizedBox(height: 12),
+                _PausedByHubBanner(onResume: _resumeFromHubPause),
+              ],
               const SizedBox(height: 8),
               if (state.hubIp != null)
                 Text(
@@ -272,6 +320,47 @@ class _ClientScreenState extends ConsumerState<ClientScreen> {
             ],
           ),
         ),
+      ),
+    );
+  }
+}
+
+/// Hub のリモート操作で配信が止められているときのバナー。
+class _PausedByHubBanner extends StatelessWidget {
+  final VoidCallback onResume;
+
+  const _PausedByHubBanner({required this.onResume});
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
+      decoration: BoxDecoration(
+        color: Colors.orange.withValues(alpha: 0.12),
+        borderRadius: BorderRadius.circular(10),
+        border: Border.all(color: Colors.orange.shade300),
+      ),
+      child: Column(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          const Row(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Icon(Icons.pause_circle, color: Colors.orange, size: 20),
+              SizedBox(width: 8),
+              Text(
+                'Hub により配信が一時停止されています',
+                style: TextStyle(fontSize: 13, color: Colors.deepOrange),
+              ),
+            ],
+          ),
+          const SizedBox(height: 6),
+          TextButton.icon(
+            icon: const Icon(Icons.play_arrow, size: 18),
+            label: const Text('このデバイスから配信を再開'),
+            onPressed: onResume,
+          ),
+        ],
       ),
     );
   }

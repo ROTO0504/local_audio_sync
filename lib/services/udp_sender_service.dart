@@ -55,6 +55,11 @@ class UdpSenderService {
   final LinkedHashSet<int> _handledCommandSeqs = LinkedHashSet<int>();
   static const int _handledCommandSeqsMax = 64;
 
+  /// 送信ゲート。Hub からの PAUSE(またはローカル操作)で閉じると、
+  /// キャプチャは続いていても音声パケットを送らない。
+  bool _paused = false;
+  bool get isPaused => _paused;
+
   /// 再接続用の指数バックオフ次回間隔(ms)。
   int _retryDelayMs = 200;
   static const int _retryDelayMaxMs = 5000;
@@ -208,7 +213,32 @@ class UdpSenderService {
       if (_handledCommandSeqs.length > _handledCommandSeqsMax) {
         _handledCommandSeqs.remove(_handledCommandSeqs.first);
       }
+      _applyRemoteCommand(command.action);
       onRemoteCommand?.call(command.action);
+    }
+  }
+
+  /// リモート制御の送信ゲート部分をサービス内で処理する。
+  /// (キャプチャの停止などサービス外の動作は onRemoteCommand で上位が行う)
+  void _applyRemoteCommand(RemoteCommandAction action) {
+    switch (action) {
+      case RemoteCommandAction.pause:
+        setPaused(true);
+      case RemoteCommandAction.resume:
+        setPaused(false);
+      case RemoteCommandAction.stop:
+        // 送信は確実に止める。キャプチャ停止は上位(UI)の責務。
+        setPaused(true);
+    }
+  }
+
+  /// 送信ゲートを開閉する。再開時は受信側のジッターバッファと辻褄を
+  /// 合わせるため seq を 0 に戻す(RESYNC と同じ扱いで受け直させる)。
+  void setPaused(bool paused) {
+    if (_paused == paused) return;
+    _paused = paused;
+    if (!paused) {
+      _sequence = 0;
     }
   }
 
@@ -242,8 +272,9 @@ class UdpSenderService {
   }
 
   /// Opus フレームを送る。送信失敗時はソケットを閉じて再接続をスケジュール。
+  /// 送信ゲートが閉じている(一時停止中)ときは何もしない。
   void sendAudio(Uint8List opusBytes) {
-    if (!isConnected) return;
+    if (!isConnected || _paused) return;
     final packet = AudioPacket(
       clientId: _clientId,
       sequence: _sequence,
@@ -274,6 +305,7 @@ class UdpSenderService {
     _pongSupported = false;
     _hubUnresponsiveNotified = false;
     _handledCommandSeqs.clear();
+    _paused = false;
   }
 
   // ---- 内部 ----

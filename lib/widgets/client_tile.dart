@@ -89,6 +89,25 @@ class ClientTile extends ConsumerWidget {
                               style: TextStyle(fontSize: 10),
                             ),
                           ),
+                        ] else if (client.isPaused) ...[
+                          const SizedBox(width: 6),
+                          Container(
+                            padding: const EdgeInsets.symmetric(
+                              horizontal: 6,
+                              vertical: 1,
+                            ),
+                            decoration: BoxDecoration(
+                              color: Colors.orange.shade100,
+                              borderRadius: BorderRadius.circular(8),
+                            ),
+                            child: const Text(
+                              '一時停止中',
+                              style: TextStyle(
+                                fontSize: 10,
+                                color: Colors.deepOrange,
+                              ),
+                            ),
+                          ),
                         ],
                       ],
                     ),
@@ -149,6 +168,23 @@ class ClientTile extends ConsumerWidget {
                   muted: !client.isMuted,
                 ),
               ),
+
+              // リモート一時停止 / 再開(v2 クライアント + 接続中のみ)
+              if (active && client.protocolVersion >= 2)
+                IconButton(
+                  icon: Icon(
+                    client.isPaused
+                        ? Icons.play_circle_outline
+                        : Icons.pause_circle_outline,
+                    size: 20,
+                    color:
+                        client.isPaused ? Colors.deepOrange : Colors.black54,
+                  ),
+                  tooltip: client.isPaused ? '配信を再開させる' : '配信を一時停止させる',
+                  onPressed: () => client.isPaused
+                      ? controller.resumeClient(client.id)
+                      : controller.pauseClient(client.id),
+                ),
 
               // 切断済みクライアントの削除ボタン(設定は保持される)
               if (!active)
