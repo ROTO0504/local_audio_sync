@@ -34,5 +34,10 @@
 	<!-- LAN 上の Hub を探索するため -->
 	<key>NSLocalNetworkUsageDescription</key>
 	<string>同じ Wi-Fi 上の Local Audio Sync ハブを探し、音声データを送信するためにローカルネットワークへアクセスします。</string>
+	<!-- mDNS(Bonjour)で Hub を公開・探索するため(サービスタイプは 15 文字以内) -->
+	<key>NSBonjourServices</key>
+	<array>
+		<string>_lasync._udp</string>
+	</array>
 </dict>
 </plist>

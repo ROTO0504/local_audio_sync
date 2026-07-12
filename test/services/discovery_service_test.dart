@@ -51,6 +51,52 @@ void main() {
     });
   });
 
+  group('DiscoveredHub.fromBeacon (v2)', () {
+    test('LAHUB2 形式をパースできる', () {
+      const beacon = 'LAHUB2:192.168.1.5:7777:MyHub:hub-uuid-1:2';
+      final result = DiscoveredHub.fromBeacon(beacon);
+      expect(result, isNotNull);
+      expect(result!.ip, '192.168.1.5');
+      expect(result.port, 7777);
+      expect(result.name, 'MyHub');
+      expect(result.hubId, 'hub-uuid-1');
+      expect(result.protocolVersion, 2);
+    });
+
+    test('v2 でも Hub 名のコロンは保持される', () {
+      const beacon = 'LAHUB2:10.0.0.1:8080:My:Hub:hub-uuid-2:2';
+      final result = DiscoveredHub.fromBeacon(beacon);
+      expect(result, isNotNull);
+      expect(result!.name, 'My:Hub');
+      expect(result.hubId, 'hub-uuid-2');
+    });
+
+    test('v1 ビーコンは hubId が null で protocolVersion 1', () {
+      final result = DiscoveredHub.fromBeacon('LAHUB:1.2.3.4:7777:Old');
+      expect(result, isNotNull);
+      expect(result!.hubId, isNull);
+      expect(result.protocolVersion, 1);
+    });
+
+    test('セグメント不足や proto 非数値は null', () {
+      expect(DiscoveredHub.fromBeacon('LAHUB2:1.2.3.4:7777:Name:hub'), isNull);
+      expect(
+        DiscoveredHub.fromBeacon('LAHUB2:1.2.3.4:7777:Name:hub:x'),
+        isNull,
+      );
+    });
+
+    test('v1 と v2 のビーコンは同じ Hub として dedup される(equality)', () {
+      // 交互送信される v1/v2 ビーコンで ClientDiscoveryListener の
+      // 重複抑止が壊れないことの前提条件。
+      final v1 = DiscoveredHub.fromBeacon('LAHUB:1.2.3.4:7777:SameHub')!;
+      final v2 =
+          DiscoveredHub.fromBeacon('LAHUB2:1.2.3.4:7777:SameHub:hub-x:2')!;
+      expect(v1, equals(v2));
+      expect(v1.hashCode, equals(v2.hashCode));
+    });
+  });
+
   group('ClientDiscoveryListener Hub 喪失タイムアウト', () {
     test('lossTimeout 経過後、hubLostStream にイベントが流れる', () async {
       // ループバックに自前で送るので reusePort 周りの挙動差を回避するため

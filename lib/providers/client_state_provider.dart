@@ -6,6 +6,9 @@ class ClientState {
   final ClientConnectionStatus status;
   final String? hubIp;
   final int hubPort;
+
+  /// 接続(試行)中の Hub の表示名。
+  final String? hubName;
   final String? assignedClientId;
   final double vuLevel; // 0.0 - 1.0, for VU meter
   final bool isBroadcasting;
@@ -14,6 +17,7 @@ class ClientState {
     this.status = ClientConnectionStatus.searching,
     this.hubIp,
     this.hubPort = 7777,
+    this.hubName,
     this.assignedClientId,
     this.vuLevel = 0.0,
     this.isBroadcasting = false,
@@ -23,6 +27,7 @@ class ClientState {
     ClientConnectionStatus? status,
     String? hubIp,
     int? hubPort,
+    String? hubName,
     String? assignedClientId,
     double? vuLevel,
     bool? isBroadcasting,
@@ -31,6 +36,7 @@ class ClientState {
       status: status ?? this.status,
       hubIp: hubIp ?? this.hubIp,
       hubPort: hubPort ?? this.hubPort,
+      hubName: hubName ?? this.hubName,
       assignedClientId: assignedClientId ?? this.assignedClientId,
       vuLevel: vuLevel ?? this.vuLevel,
       isBroadcasting: isBroadcasting ?? this.isBroadcasting,
@@ -46,11 +52,12 @@ class ClientStateNotifier extends Notifier<ClientState> {
     state = const ClientState(status: ClientConnectionStatus.searching);
   }
 
-  void setConnecting(String hubIp, int hubPort) {
+  void setConnecting(String hubIp, int hubPort, {String? hubName}) {
     state = state.copyWith(
       status: ClientConnectionStatus.connecting,
       hubIp: hubIp,
       hubPort: hubPort,
+      hubName: hubName,
     );
   }
 

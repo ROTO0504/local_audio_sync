@@ -76,7 +76,7 @@ class _SetupScreenState extends ConsumerState<SetupScreen> {
               _RoleCard(
                 icon: Icons.hub,
                 title: 'Hub(集約・再生)',
-                subtitle: '全クライアントの音声を受信してミックス再生\n(Windows 推奨)',
+                subtitle: '全クライアントの音声を受信してミックス再生\n(iPhone / iPad / Mac / Windows / Android)',
                 color: Colors.deepPurple,
                 onTap: _loading ? null : () => _select(AppMode.hub),
               ),

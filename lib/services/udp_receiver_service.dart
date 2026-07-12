@@ -4,6 +4,7 @@ import 'package:flutter/foundation.dart';
 import '../models/audio_packet.dart';
 import '../models/control_messages.dart';
 import 'command_retry_queue.dart';
+import 'discovery_service.dart' show kAudioPort;
 
 typedef OnAudioPacket = void Function(AudioPacket packet, String sourceIp);
 typedef OnClientHello = void Function(
@@ -192,5 +193,3 @@ class UdpReceiverService {
     _closeSocket();
   }
 }
-
-const int kAudioPort = 7777;

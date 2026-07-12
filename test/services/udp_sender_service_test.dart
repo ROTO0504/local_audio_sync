@@ -40,8 +40,19 @@ class _MockHub {
     socket = s;
     sub = s.listen((event) {
       if (event != RawSocketEvent.read) return;
-      final dg = s.receive();
-      if (dg == null) return;
+      // 実装側と同じく、1 回の read イベントに複数データグラムが
+      // 溜まっていても取りこぼさないよう null までドレインする。
+      while (true) {
+        final dg = s.receive();
+        if (dg == null) break;
+        _handleDatagram(s, dg);
+      }
+    });
+    return s.port;
+  }
+
+  void _handleDatagram(RawDatagramSocket s, Datagram dg) {
+    {
       lastSenderAddr = dg.address;
       lastSenderPort = dg.port;
 
@@ -91,8 +102,7 @@ class _MockHub {
       if (packet != null) {
         receivedSeqs.add(packet.sequence);
       }
-    });
-    return s.port;
+    }
   }
 
   /// 送信側に RESYNC を返す。lastSenderAddr/Port が判明している前提。

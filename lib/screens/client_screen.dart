@@ -7,6 +7,7 @@ import '../providers/app_mode_provider.dart';
 import '../providers/client_state_provider.dart';
 import '../services/device_identity_service.dart';
 import '../services/discovery_service.dart';
+import '../services/mdns_discovery_service.dart';
 import '../services/opus_encoder_service.dart';
 import '../services/pcm_constants.dart';
 import '../services/screen_audio_capture_service.dart';
@@ -32,12 +33,14 @@ class ClientScreen extends ConsumerStatefulWidget {
 
 class _ClientScreenState extends ConsumerState<ClientScreen> {
   final ClientDiscoveryListener _discovery = ClientDiscoveryListener();
+  final ClientMdnsBrowser _mdnsBrowser = ClientMdnsBrowser();
   final ScreenAudioCaptureService _capture = ScreenAudioCaptureService();
   final OpusEncoderService _encoder = OpusEncoderService();
   final UdpSenderService _sender = UdpSenderService();
   final DeviceIdentityService _identity = DeviceIdentityService();
 
   StreamSubscription? _discoverySub;
+  StreamSubscription? _mdnsSub;
   StreamSubscription? _hubLostSub;
   StreamSubscription? _captureSub;
   Timer? _broadcastingPoll;
@@ -46,11 +49,15 @@ class _ClientScreenState extends ConsumerState<ClientScreen> {
   int _packetCount = 0;
   String? _captureError;
   bool _broadcastingActive = false;
+  String? _deviceId;
 
   @override
   void initState() {
     super.initState();
     _encoder.init();
+    _identity.getClientUuid().then((uuid) {
+      if (mounted) setState(() => _deviceId = uuid);
+    });
     // v2 Hub の PONG が途絶えたら、ビーコン喪失と同じ経路で再探索に戻す。
     _sender.onHubUnresponsive = () => _onHubLost();
     // リモート制御(PAUSE/RESUME/STOP)の実動作はフェーズ 4 で実装する。
@@ -72,9 +79,13 @@ class _ClientScreenState extends ConsumerState<ClientScreen> {
   Future<void> _startDiscovery() async {
     ref.read(clientStateProvider.notifier).setSearching();
     try {
+      // UDP ビーコンと mDNS の両方で探索する(どちらで見つかっても同じ
+      // _onHubFound へ。接続中の重複発見はガードで無視される)。
       await _discovery.start();
       _discoverySub = _discovery.stream.listen(_onHubFound);
       _hubLostSub = _discovery.hubLostStream.listen((_) => _onHubLost());
+      await _mdnsBrowser.start();
+      _mdnsSub = _mdnsBrowser.stream.listen(_onHubFound);
     } catch (e) {
       _showSnack('Hub 検索の開始に失敗しました: $e');
     }
@@ -100,7 +111,9 @@ class _ClientScreenState extends ConsumerState<ClientScreen> {
       return;
     }
 
-    ref.read(clientStateProvider.notifier).setConnecting(hub.ip, hub.port);
+    ref
+        .read(clientStateProvider.notifier)
+        .setConnecting(hub.ip, hub.port, hubName: hub.name);
 
     try {
       final name = ref.read(deviceNameProvider);
@@ -195,8 +208,10 @@ class _ClientScreenState extends ConsumerState<ClientScreen> {
     _broadcastingPoll = null;
     _stop();
     _discoverySub?.cancel();
+    _mdnsSub?.cancel();
     _hubLostSub?.cancel();
     _discovery.dispose();
+    _mdnsBrowser.dispose();
     _encoder.dispose();
     _capture.dispose();
     super.dispose();
@@ -234,8 +249,15 @@ class _ClientScreenState extends ConsumerState<ClientScreen> {
               const SizedBox(height: 8),
               if (state.hubIp != null)
                 Text(
-                  'Hub: ${state.hubIp}',
+                  state.hubName == null
+                      ? 'Hub: ${state.hubIp}'
+                      : 'Hub: ${state.hubName}(${state.hubIp})',
                   style: const TextStyle(fontSize: 13, color: Colors.grey),
+                ),
+              if (_deviceId != null)
+                Text(
+                  'このデバイスの ID: ${_deviceId!.substring(0, 8)}',
+                  style: TextStyle(fontSize: 11, color: Colors.grey.shade500),
                 ),
               const SizedBox(height: 24),
               _BroadcastSection(
