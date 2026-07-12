@@ -10,5 +10,8 @@ PRODUCT_NAME = local_audio_sync
 // The application's bundle identifier
 PRODUCT_BUNDLE_IDENTIFIER = com.roto0504.localAudioSync
 
+// Apple Developer Team ID(TestFlight/署名用。CI の cloud signing で使用)
+DEVELOPMENT_TEAM = 7H7U867AYF
+
 // The copyright displayed in application information
 PRODUCT_COPYRIGHT = Copyright © 2026 roto0504. All rights reserved.

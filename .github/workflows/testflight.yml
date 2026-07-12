@@ -53,8 +53,10 @@ jobs:
           printf '%s' "$ASC_KEY_P8" > "$HOME/private_keys/AuthKey_${ASC_KEY_ID}.p8"
 
       - name: Generate Flutter build config
-        # ビルド番号は Run 番号で単調増加させる(TestFlight は重複ビルド番号を拒否する)
-        run: flutter build ios --release --config-only --build-number=${{ github.run_number }}
+        # ビルド番号は Run 番号で単調増加させる(TestFlight は重複ビルド番号を拒否する)。
+        # --no-codesign で Flutter の証明書チェックを回避する(実署名は後段の
+        # xcodebuild archive が cloud signing で行うため、ここでは不要)。
+        run: flutter build ios --release --config-only --no-codesign --build-number=${{ github.run_number }}
 
       - name: Install CocoaPods
         working-directory: ios
