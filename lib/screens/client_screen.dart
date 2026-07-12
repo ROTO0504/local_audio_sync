@@ -8,6 +8,7 @@ import '../providers/app_mode_provider.dart';
 import '../providers/client_state_provider.dart';
 import '../services/device_identity_service.dart';
 import '../services/discovery_service.dart';
+import '../services/manual_hub_store.dart';
 import '../services/mdns_discovery_service.dart';
 import '../services/opus_encoder_service.dart';
 import '../services/pcm_constants.dart';
@@ -39,18 +40,23 @@ class _ClientScreenState extends ConsumerState<ClientScreen> {
   final OpusEncoderService _encoder = OpusEncoderService();
   final UdpSenderService _sender = UdpSenderService();
   final DeviceIdentityService _identity = DeviceIdentityService();
+  final ManualHubStore _manualStore = ManualHubStore();
 
   StreamSubscription? _discoverySub;
   StreamSubscription? _mdnsSub;
   StreamSubscription? _hubLostSub;
   StreamSubscription? _captureSub;
   Timer? _broadcastingPoll;
+  Timer? _manualRetryTimer;
 
   bool _connectingToHub = false;
   int _packetCount = 0;
   String? _captureError;
   bool _broadcastingActive = false;
   String? _deviceId;
+
+  /// 手動接続中の接続先(null なら自動探索モード)。
+  DiscoveredHub? _manualHub;
 
   @override
   void initState() {
@@ -92,13 +98,74 @@ class _ClientScreenState extends ConsumerState<ClientScreen> {
   }
 
   Future<void> _onHubLost() async {
-    debugPrint('[ClientScreen] Hub のビーコンが途絶えたので再探索状態に戻ります');
     _sender.disconnect();
     _connectingToHub = false;
-    if (mounted) {
+    if (!mounted) return;
+
+    final manual = _manualHub;
+    if (manual != null) {
+      // 手動接続モードでは探索に戻らず、同じ接続先へ再接続を試み続ける
+      debugPrint('[ClientScreen] 手動接続先への再接続を試みます');
+      ref
+          .read(clientStateProvider.notifier)
+          .setConnecting(manual.ip, manual.port, hubName: manual.name);
+      _showSnack('Hub への接続が切れました。再接続しています...');
+      _scheduleManualReconnect();
+    } else {
+      debugPrint('[ClientScreen] Hub のビーコンが途絶えたので再探索状態に戻ります');
       ref.read(clientStateProvider.notifier).setSearching();
       _showSnack('Hub への接続を見失いました。再探索しています...');
     }
+  }
+
+  void _scheduleManualReconnect() {
+    _manualRetryTimer?.cancel();
+    _manualRetryTimer = Timer.periodic(const Duration(seconds: 3), (timer) {
+      final manual = _manualHub;
+      if (!mounted || manual == null || _sender.isConnected) {
+        timer.cancel();
+        return;
+      }
+      _onHubFound(manual);
+    });
+  }
+
+  /// 探索(ビーコン + mDNS)を停止する。手動接続に切り替えるとき用。
+  Future<void> _stopDiscovery() async {
+    await _discoverySub?.cancel();
+    _discoverySub = null;
+    await _mdnsSub?.cancel();
+    _mdnsSub = null;
+    await _hubLostSub?.cancel();
+    _hubLostSub = null;
+    _discovery.stop();
+    await _mdnsBrowser.stop();
+  }
+
+  /// IP:ポート指定で Hub に接続する(ブロードキャスト不達環境 / VPN / WAN 用)。
+  Future<void> _connectManually(String ip, int port) async {
+    _manualRetryTimer?.cancel();
+    await _stopDiscovery();
+    _sender.disconnect();
+    _connectingToHub = false;
+
+    final hub = DiscoveredHub(ip: ip, port: port, name: '手動接続');
+    setState(() => _manualHub = hub);
+    await _manualStore.add(ip, port);
+    await _onHubFound(hub);
+    // 初回接続に失敗した場合もリトライループに乗せる
+    if (!_sender.isConnected) {
+      _scheduleManualReconnect();
+    }
+  }
+
+  /// 手動接続をやめて自動探索に戻る。
+  Future<void> _returnToAutoDiscovery() async {
+    _manualRetryTimer?.cancel();
+    setState(() => _manualHub = null);
+    _sender.disconnect();
+    _connectingToHub = false;
+    await _startDiscovery();
   }
 
   Future<void> _onHubFound(DiscoveredHub hub) async {
@@ -246,10 +313,108 @@ class _ClientScreenState extends ConsumerState<ClientScreen> {
     ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(message)));
   }
 
+  /// 手動接続ダイアログ(IP:ポート入力 + 接続履歴)。
+  Future<void> _showManualConnectDialog() async {
+    final history = await _manualStore.loadHistory();
+    if (!mounted) return;
+
+    final ipController = TextEditingController(text: _manualHub?.ip ?? '');
+    final portController =
+        TextEditingController(text: '${_manualHub?.port ?? kAudioPort}');
+
+    await showDialog<void>(
+      context: context,
+      builder: (dialogContext) => AlertDialog(
+        title: const Text('Hub へ手動接続'),
+        content: SingleChildScrollView(
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              const Text(
+                'ブロードキャストが届かないネットワーク(別セグメントや VPN 経由)では、'
+                'Hub 画面に表示される IP:ポート を直接入力してください。',
+                style: TextStyle(fontSize: 12, color: Colors.grey),
+              ),
+              const SizedBox(height: 12),
+              TextField(
+                controller: ipController,
+                keyboardType: TextInputType.number,
+                decoration: const InputDecoration(
+                  labelText: 'Hub の IP アドレス',
+                  hintText: '例: 192.168.1.10',
+                  border: OutlineInputBorder(),
+                  isDense: true,
+                ),
+              ),
+              const SizedBox(height: 10),
+              TextField(
+                controller: portController,
+                keyboardType: TextInputType.number,
+                decoration: const InputDecoration(
+                  labelText: 'ポート',
+                  border: OutlineInputBorder(),
+                  isDense: true,
+                ),
+              ),
+              if (history.isNotEmpty) ...[
+                const SizedBox(height: 12),
+                const Text('最近の接続先',
+                    style: TextStyle(fontSize: 12, color: Colors.grey)),
+                ...history.map(
+                  (entry) => ListTile(
+                    dense: true,
+                    leading: const Icon(Icons.history, size: 18),
+                    title: Text(entry, style: const TextStyle(fontSize: 13)),
+                    onTap: () {
+                      final parsed = ManualHubStore.parse(entry);
+                      if (parsed == null) return;
+                      Navigator.of(dialogContext).pop();
+                      _connectManually(parsed.ip, parsed.port);
+                    },
+                  ),
+                ),
+              ],
+            ],
+          ),
+        ),
+        actions: [
+          if (_manualHub != null)
+            TextButton(
+              onPressed: () {
+                Navigator.of(dialogContext).pop();
+                _returnToAutoDiscovery();
+              },
+              child: const Text('自動探索に戻る'),
+            ),
+          TextButton(
+            onPressed: () => Navigator.of(dialogContext).pop(),
+            child: const Text('キャンセル'),
+          ),
+          FilledButton(
+            onPressed: () {
+              final ip = ipController.text.trim();
+              final port = int.tryParse(portController.text.trim());
+              if (ip.isEmpty || port == null || port < 1 || port > 65535) {
+                _showSnack('IP アドレスとポートを確認してください');
+                return;
+              }
+              Navigator.of(dialogContext).pop();
+              _connectManually(ip, port);
+            },
+            child: const Text('接続'),
+          ),
+        ],
+      ),
+    );
+  }
+
   @override
   void dispose() {
     _broadcastingPoll?.cancel();
     _broadcastingPoll = null;
+    _manualRetryTimer?.cancel();
+    _manualRetryTimer = null;
     _stop();
     _discoverySub?.cancel();
     _mdnsSub?.cancel();
@@ -271,6 +436,14 @@ class _ClientScreenState extends ConsumerState<ClientScreen> {
       appBar: AppBar(
         title: Text('クライアント — $name'),
         actions: [
+          IconButton(
+            icon: Icon(
+              Icons.settings_ethernet,
+              color: _manualHub != null ? Colors.orange : null,
+            ),
+            tooltip: 'Hub へ手動接続(IP 指定)',
+            onPressed: _showManualConnectDialog,
+          ),
           IconButton(
             icon: const Icon(Icons.swap_horiz),
             tooltip: '役割を切り替え',
@@ -315,6 +488,9 @@ class _ClientScreenState extends ConsumerState<ClientScreen> {
                 packetCount: _packetCount,
                 captureError: _captureError,
                 preferredExtensionId: _broadcastExtensionBundleId,
+                manualTarget: _manualHub == null
+                    ? null
+                    : '${_manualHub!.ip}:${_manualHub!.port}',
                 onStop: _stop,
               ),
             ],
@@ -373,6 +549,9 @@ class _BroadcastSection extends StatelessWidget {
   final int packetCount;
   final String? captureError;
   final String preferredExtensionId;
+
+  /// 手動接続中の接続先(`ip:port`)。null なら自動探索モード。
+  final String? manualTarget;
   final VoidCallback onStop;
 
   const _BroadcastSection({
@@ -382,8 +561,13 @@ class _BroadcastSection extends StatelessWidget {
     required this.packetCount,
     required this.captureError,
     required this.preferredExtensionId,
+    required this.manualTarget,
     required this.onStop,
   });
+
+  String get _searchingLabel => manualTarget == null
+      ? 'ローカルネットワーク内の Hub を探しています...'
+      : '$manualTarget へ接続を試みています...';
 
   @override
   Widget build(BuildContext context) {
@@ -391,10 +575,10 @@ class _BroadcastSection extends StatelessWidget {
       return Column(
         children: [
           if (!isConnected)
-            const Text(
-              'ローカルネットワーク内の Hub を探しています...',
+            Text(
+              _searchingLabel,
               textAlign: TextAlign.center,
-              style: TextStyle(color: Colors.grey),
+              style: const TextStyle(color: Colors.grey),
             )
           else
             Text(
@@ -448,10 +632,10 @@ class _BroadcastSection extends StatelessWidget {
     return Column(
       children: [
         if (!isConnected)
-          const Text(
-            'ローカルネットワーク内の Hub を探しています...',
+          Text(
+            _searchingLabel,
             textAlign: TextAlign.center,
-            style: TextStyle(color: Colors.grey),
+            style: const TextStyle(color: Colors.grey),
           )
         else
           Text(
