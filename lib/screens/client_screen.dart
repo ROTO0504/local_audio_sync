@@ -3,9 +3,9 @@ import 'dart:io';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
-import 'package:uuid/uuid.dart';
 import '../providers/app_mode_provider.dart';
 import '../providers/client_state_provider.dart';
+import '../services/device_identity_service.dart';
 import '../services/discovery_service.dart';
 import '../services/opus_encoder_service.dart';
 import '../services/pcm_constants.dart';
@@ -35,7 +35,7 @@ class _ClientScreenState extends ConsumerState<ClientScreen> {
   final ScreenAudioCaptureService _capture = ScreenAudioCaptureService();
   final OpusEncoderService _encoder = OpusEncoderService();
   final UdpSenderService _sender = UdpSenderService();
-  final _uuid = const Uuid().v4();
+  final DeviceIdentityService _identity = DeviceIdentityService();
 
   StreamSubscription? _discoverySub;
   StreamSubscription? _hubLostSub;
@@ -51,6 +51,12 @@ class _ClientScreenState extends ConsumerState<ClientScreen> {
   void initState() {
     super.initState();
     _encoder.init();
+    // v2 Hub の PONG が途絶えたら、ビーコン喪失と同じ経路で再探索に戻す。
+    _sender.onHubUnresponsive = () => _onHubLost();
+    // リモート制御(PAUSE/RESUME/STOP)の実動作はフェーズ 4 で実装する。
+    _sender.onRemoteCommand = (action) {
+      debugPrint('[ClientScreen] リモート制御コマンド受信: ${action.wire}');
+    };
     _startDiscovery();
     if (Platform.isIOS) {
       // iOS では実際の音が来るのは Picker でユーザーがブロードキャストを
@@ -98,8 +104,9 @@ class _ClientScreenState extends ConsumerState<ClientScreen> {
 
     try {
       final name = ref.read(deviceNameProvider);
-      await _sender.connect(hub.ip, hub.port, name, _uuid);
-      ref.read(clientStateProvider.notifier).setConnected(_uuid);
+      final uuid = await _identity.getClientUuid();
+      await _sender.connect(hub.ip, hub.port, name, uuid);
+      ref.read(clientStateProvider.notifier).setConnected(uuid);
 
       // iOS 以外は接続後に直ちにキャプチャ起動。
       // iOS は initState で起動済み(Extension からの PCM 待ち)。

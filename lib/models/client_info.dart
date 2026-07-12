@@ -5,6 +5,13 @@ class ClientInfo {
   final String name;
   final String ip;
   final int port;
+
+  /// `ios` / `android` / `macos` / `windows` / `linux` / `unknown`。
+  final String platform;
+
+  /// クライアントが話すプロトコルバージョン(v1 HELLO なら 1)。
+  final int protocolVersion;
+
   final double volume; // 0.0 - 1.0
   final bool isMuted;
   final bool isActive;
@@ -16,6 +23,8 @@ class ClientInfo {
     required this.name,
     required this.ip,
     required this.port,
+    this.platform = 'unknown',
+    this.protocolVersion = 1,
     this.volume = 1.0,
     this.isMuted = false,
     this.isActive = true,
@@ -28,6 +37,8 @@ class ClientInfo {
     String? name,
     String? ip,
     int? port,
+    String? platform,
+    int? protocolVersion,
     double? volume,
     bool? isMuted,
     bool? isActive,
@@ -39,6 +50,8 @@ class ClientInfo {
       name: name ?? this.name,
       ip: ip ?? this.ip,
       port: port ?? this.port,
+      platform: platform ?? this.platform,
+      protocolVersion: protocolVersion ?? this.protocolVersion,
       volume: volume ?? this.volume,
       isMuted: isMuted ?? this.isMuted,
       isActive: isActive ?? this.isActive,

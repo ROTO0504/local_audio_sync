@@ -4,6 +4,7 @@ import 'dart:typed_data';
 
 import 'package:flutter_test/flutter_test.dart';
 import 'package:local_audio_sync/models/audio_packet.dart';
+import 'package:local_audio_sync/models/control_messages.dart';
 import 'package:local_audio_sync/services/udp_sender_service.dart';
 
 /// モック Hub。loopback で UDP を bind し、HELLO/ACKHELLO の挙動と
@@ -15,8 +16,14 @@ class _MockHub {
   /// HELLO を受け取ったときに ACKHELLO で返す clientId。
   int ackClientId = 1;
 
-  /// HELLO に対して ACKHELLO を返すかどうか(false ならタイムアウトを模擬)。
+  /// v1 HELLO に対して ACKHELLO を返すかどうか(false ならタイムアウトを模擬)。
   bool replyAckHello = true;
+
+  /// v2 HELLO2 に対して ACKHELLO を返すかどうか(新 Hub の模擬)。
+  bool replyAckHelloOnV2 = false;
+
+  /// PING に PONG を返すかどうか(v2 Hub の模擬)。
+  bool replyPong = false;
 
   /// 直近に受け取った送信側の (address, port)。RESYNC 等を返すのに使う。
   InternetAddress? lastSenderAddr;
@@ -41,6 +48,17 @@ class _MockHub {
       // テキスト系を先に判定
       if (dg.data.isNotEmpty && dg.data[0] < 128) {
         final text = String.fromCharCodes(dg.data);
+        if (text.startsWith('HELLO2:')) {
+          receivedTexts.add(text);
+          if (replyAckHelloOnV2) {
+            s.send(
+              'ACKHELLO:$ackClientId'.codeUnits,
+              dg.address,
+              dg.port,
+            );
+          }
+          return;
+        }
         if (text.startsWith('HELLO:')) {
           receivedTexts.add(text);
           if (replyAckHello) {
@@ -52,7 +70,17 @@ class _MockHub {
           }
           return;
         }
-        if (text.startsWith('PING:') || text.startsWith('BYE:')) {
+        if (text.startsWith('PING:')) {
+          receivedTexts.add(text);
+          if (replyPong) {
+            final id = int.tryParse(text.substring(5));
+            if (id != null) {
+              s.send('PONG:$id'.codeUnits, dg.address, dg.port);
+            }
+          }
+          return;
+        }
+        if (text.startsWith('BYE:') || text.startsWith('CMDACK:')) {
           receivedTexts.add(text);
           return;
         }
@@ -74,6 +102,15 @@ class _MockHub {
     final port = lastSenderPort;
     if (s == null || addr == null || port == null) return;
     s.send('RESYNC:$clientId'.codeUnits, addr, port);
+  }
+
+  /// 送信側に CMD(リモート制御)を送る。
+  void sendCommandTo(int clientId, int commandSeq, String action) {
+    final s = socket;
+    final addr = lastSenderAddr;
+    final port = lastSenderPort;
+    if (s == null || addr == null || port == null) return;
+    s.send('CMD:$clientId:$commandSeq:$action'.codeUnits, addr, port);
   }
 
   void stop() {
@@ -196,6 +233,156 @@ void main() {
         hub.stop();
       }
     });
+  });
+
+  group('UdpSenderService プロトコル v2', () {
+    test('connect で HELLO2 と v1 HELLO が併送される', () async {
+      final hub = _MockHub()..ackClientId = 21;
+      final sender = UdpSenderService();
+      try {
+        final port = await hub.start();
+        await sender.connect(
+          '127.0.0.1',
+          port,
+          'tester',
+          'uuid-v2',
+          platform: 'windows',
+        );
+        await Future<void>.delayed(const Duration(milliseconds: 80));
+
+        expect(hub.receivedTexts, contains('HELLO2:tester:uuid-v2:windows:2'));
+        expect(hub.receivedTexts, contains('HELLO:tester:uuid-v2'));
+      } finally {
+        sender.disconnect();
+        hub.stop();
+      }
+    });
+
+    test('HELLO2 にだけ応答する新 Hub でも接続できる', () async {
+      final hub = _MockHub()
+        ..ackClientId = 22
+        ..replyAckHello = false
+        ..replyAckHelloOnV2 = true;
+      final sender = UdpSenderService();
+      try {
+        final port = await hub.start();
+        await sender.connect(
+          '127.0.0.1',
+          port,
+          'tester',
+          'uuid-v2only',
+          platform: 'macos',
+        );
+        expect(sender.isConnected, isTrue);
+        expect(sender.clientId, 22);
+      } finally {
+        sender.disconnect();
+        hub.stop();
+      }
+    });
+
+    test('CMD を受けると CMDACK を返し、再送では重複実行しない', () async {
+      final hub = _MockHub()..ackClientId = 23;
+      final sender = UdpSenderService();
+      final actions = <RemoteCommandAction>[];
+      sender.onRemoteCommand = actions.add;
+      try {
+        final port = await hub.start();
+        await sender.connect(
+          '127.0.0.1',
+          port,
+          'tester',
+          'uuid-cmd',
+          platform: 'windows',
+        );
+
+        // 同じ commandSeq の CMD を 2 回(再送を模擬)
+        hub.sendCommandTo(23, 1, 'PAUSE');
+        hub.sendCommandTo(23, 1, 'PAUSE');
+        await Future<void>.delayed(const Duration(milliseconds: 120));
+
+        // 実行は 1 回だけ
+        expect(actions, equals([RemoteCommandAction.pause]));
+        // ACK は再送分にも毎回返す(Hub の再送を止めるため)
+        final acks =
+            hub.receivedTexts.where((t) => t == 'CMDACK:23:1').length;
+        expect(acks, 2);
+
+        // 新しい commandSeq は実行される
+        hub.sendCommandTo(23, 2, 'RESUME');
+        await Future<void>.delayed(const Duration(milliseconds: 80));
+        expect(
+          actions,
+          equals([RemoteCommandAction.pause, RemoteCommandAction.resume]),
+        );
+      } finally {
+        sender.disconnect();
+        hub.stop();
+      }
+    });
+
+    test('別 clientId 宛の CMD は無視する', () async {
+      final hub = _MockHub()..ackClientId = 24;
+      final sender = UdpSenderService();
+      final actions = <RemoteCommandAction>[];
+      sender.onRemoteCommand = actions.add;
+      try {
+        final port = await hub.start();
+        await sender.connect(
+          '127.0.0.1',
+          port,
+          'tester',
+          'uuid-other-cmd',
+          platform: 'windows',
+        );
+
+        hub.sendCommandTo(99, 1, 'STOP');
+        await Future<void>.delayed(const Duration(milliseconds: 80));
+
+        expect(actions, isEmpty);
+        expect(
+          hub.receivedTexts.where((t) => t.startsWith('CMDACK:')),
+          isEmpty,
+        );
+      } finally {
+        sender.disconnect();
+        hub.stop();
+      }
+    });
+
+    test('PONG が途絶えると onHubUnresponsive が一度だけ発火する', () async {
+      final hub = _MockHub()
+        ..ackClientId = 25
+        ..replyPong = true;
+      final sender = UdpSenderService(
+        pingInterval: const Duration(milliseconds: 80),
+        pongTimeout: const Duration(milliseconds: 200),
+      );
+      var unresponsiveCount = 0;
+      sender.onHubUnresponsive = () => unresponsiveCount++;
+      try {
+        final port = await hub.start();
+        await sender.connect(
+          '127.0.0.1',
+          port,
+          'tester',
+          'uuid-pong',
+          platform: 'windows',
+        );
+
+        // PONG が返っている間は発火しない
+        await Future<void>.delayed(const Duration(milliseconds: 400));
+        expect(unresponsiveCount, 0);
+
+        // Hub が PONG を返さなくなる(プロセスは生きているがハング状態を模擬)
+        hub.replyPong = false;
+        await Future<void>.delayed(const Duration(milliseconds: 600));
+        expect(unresponsiveCount, 1);
+      } finally {
+        sender.disconnect();
+        hub.stop();
+      }
+    }, timeout: const Timeout(Duration(seconds: 15)));
   });
 
   group('UdpSenderService disconnect', () {
