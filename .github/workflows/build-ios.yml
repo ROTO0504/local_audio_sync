@@ -8,6 +8,8 @@ on:
   pull_request:
     branches:
       - main
+  # 任意のブランチをオンデマンドで署名なしビルド確認するための手動トリガー。
+  workflow_dispatch:
 
 env:
   FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
