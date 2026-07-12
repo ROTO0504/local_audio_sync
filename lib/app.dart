@@ -10,8 +10,18 @@ import 'screens/hub_screen.dart';
 import 'screens/client_screen.dart';
 import 'theme/app_theme.dart';
 
+/// アプリのルート。
+///
+/// 設定(デバイス名 / テーマ / 役割)の復元は [main] の runApp 前に済ませ、
+/// ここでは最初のフレームから本番 UI(MaterialApp.router)を描画する。
+/// 以前は `_ready` フラグでスプラッシュ用 MaterialApp → 本番 MaterialApp.router
+/// へ**ルート Widget を丸ごと差し替え**ていたが、Windows でこの差し替えが
+/// 初回フレームの合成とレースして画面が真っ白になることがあったため廃止した。
 class LocalAudioSyncApp extends ConsumerStatefulWidget {
-  const LocalAudioSyncApp({super.key});
+  /// 復元済みの初期役割(null = 未設定 → /setup へ)。
+  final AppMode? initialMode;
+
+  const LocalAudioSyncApp({super.key, required this.initialMode});
 
   @override
   ConsumerState<LocalAudioSyncApp> createState() => _LocalAudioSyncAppState();
@@ -19,21 +29,19 @@ class LocalAudioSyncApp extends ConsumerStatefulWidget {
 
 class _LocalAudioSyncAppState extends ConsumerState<LocalAudioSyncApp> {
   late final GoRouter _router;
-  bool _ready = false;
 
   @override
   void initState() {
     super.initState();
-    _init();
-  }
-
-  Future<void> _init() async {
-    // Restore persisted settings before routing
-    await ref.read(deviceNameProvider.notifier).restoreName();
-    await ref.read(themeModeProvider.notifier).restore();
-    final mode = await ref.read(appModeProvider.notifier).restoreMode();
-    _router = _buildRouter(mode);
-    if (mounted) setState(() => _ready = true);
+    _router = _buildRouter(widget.initialMode);
+    // Windows の初回フレーム提示レース対策。負荷が高いと最初のフレームが
+    // GPU に提示されず画面が真っ白になることがあるため、起動直後に一度だけ
+    // 再描画を促して確実に提示させる(低リスクの保険)。
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      Future.delayed(const Duration(milliseconds: 250), () {
+        if (mounted) setState(() {});
+      });
+    });
   }
 
   GoRouter _buildRouter(AppMode? initialMode) {
@@ -82,17 +90,6 @@ class _LocalAudioSyncAppState extends ConsumerState<LocalAudioSyncApp> {
 
   @override
   Widget build(BuildContext context) {
-    if (!_ready) {
-      return MaterialApp(
-        theme: AppTheme.light(),
-        darkTheme: AppTheme.dark(),
-        localizationsDelegates: _localizationsDelegates,
-        supportedLocales: _supportedLocales,
-        locale: const Locale('ja', 'JP'),
-        home: const Scaffold(body: Center(child: CircularProgressIndicator())),
-      );
-    }
-
     final themeMode = ref.watch(themeModeProvider);
     return MaterialApp.router(
       title: 'Local Audio Sync',
