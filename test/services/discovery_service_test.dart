@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'dart:convert';
 import 'dart:io';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
@@ -7,6 +8,19 @@ import 'package:local_audio_sync/services/discovery_service.dart';
 
 void main() {
   group('DiscoveredHub.fromBeacon', () {
+    test('日本語のデバイス名が UTF-8 バイト往復で壊れない', () {
+      // 送信側は utf8.encode、受信側は utf8.decode(allowMalformed) を使う。
+      // 以前は codeUnits / fromCharCodes で非 ASCII 名が文字化けしていた。
+      const name = 'マイデバイス';
+      const beacon = 'LAHUB2:192.168.1.10:7777:$name:hub-uuid-1:2';
+      final bytes = utf8.encode(beacon);
+      final decoded = utf8.decode(bytes, allowMalformed: true);
+      final hub = DiscoveredHub.fromBeacon(decoded);
+      expect(hub, isNotNull);
+      expect(hub!.name, equals(name));
+      expect(hub.hubId, equals('hub-uuid-1'));
+    });
+
     test('正しい形式のビーコン文字列をパース', () {
       const beacon = 'LAHUB:192.168.1.5:7777:MyHub';
       final result = DiscoveredHub.fromBeacon(beacon);

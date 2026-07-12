@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'dart:convert';
 import 'dart:io';
 import 'package:network_info_plus/network_info_plus.dart';
 import '../models/control_messages.dart';
@@ -92,11 +93,12 @@ class HubBeaconSender {
 
   Future<void> start(String hubName, {String? hubId}) async {
     final localIp = await getLocalIpv4();
-    final beaconV1 = '$_kBeaconPrefix$localIp:$kAudioPort:$hubName'.codeUnits;
+    final beaconV1 =
+        utf8.encode('$_kBeaconPrefix$localIp:$kAudioPort:$hubName');
     final beaconV2 = hubId == null
         ? null
-        : '$_kBeaconV2Prefix$localIp:$kAudioPort:$hubName:$hubId:$kProtocolVersion'
-            .codeUnits;
+        : utf8.encode(
+            '$_kBeaconV2Prefix$localIp:$kAudioPort:$hubName:$hubId:$kProtocolVersion');
 
     _socket = await RawDatagramSocket.bind(InternetAddress.anyIPv4, 0);
     _socket!.broadcastEnabled = true;
@@ -205,7 +207,7 @@ class ClientDiscoveryListener {
         if (event != RawSocketEvent.read) return;
         final dg = _socket!.receive();
         if (dg == null) return;
-        final text = String.fromCharCodes(dg.data);
+        final text = utf8.decode(dg.data, allowMalformed: true);
         final hub = DiscoveredHub.fromBeacon(text);
         if (hub != null) {
           _onBeacon(hub);

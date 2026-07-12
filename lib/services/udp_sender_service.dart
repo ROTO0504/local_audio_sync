@@ -1,5 +1,6 @@
 import 'dart:async';
 import 'dart:collection';
+import 'dart:convert';
 import 'dart:io';
 import 'package:flutter/foundation.dart';
 import '../models/audio_packet.dart';
@@ -138,7 +139,8 @@ class UdpSenderService {
         while (true) {
           final dg = sock.receive();
           if (dg == null) break;
-          _handleIncomingText(String.fromCharCodes(dg.data), completer);
+          _handleIncomingText(
+              utf8.decode(dg.data, allowMalformed: true), completer);
         }
       },
       onError: (Object err) {
@@ -380,7 +382,7 @@ class UdpSenderService {
   }
 
   void _sendText(String text) {
-    _sendBytes(Uint8List.fromList(text.codeUnits));
+    _sendBytes(Uint8List.fromList(utf8.encode(text)));
   }
 
   void _sendBytes(Uint8List data) {

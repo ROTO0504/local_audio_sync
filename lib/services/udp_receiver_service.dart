@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'dart:convert';
 import 'dart:io';
 import 'package:flutter/foundation.dart';
 import '../models/audio_packet.dart';
@@ -131,7 +132,7 @@ class UdpReceiverService {
   void _dispatch(Uint8List data, String ip, int port) {
     // テキスト先頭が ASCII 範囲内のときだけテキスト解釈を試す。
     if (data.length > 5 && data[0] < 128) {
-      final text = String.fromCharCodes(data);
+      final text = utf8.decode(data, allowMalformed: true);
       final hello = ClientHello.parse(text);
       if (hello != null) {
         onClientHello?.call(hello, ip, port);
@@ -169,7 +170,7 @@ class UdpReceiverService {
   void _sendText(String text, String ip, int port) {
     try {
       _socket?.send(
-        Uint8List.fromList(text.codeUnits),
+        Uint8List.fromList(utf8.encode(text)),
         InternetAddress(ip),
         port,
       );
