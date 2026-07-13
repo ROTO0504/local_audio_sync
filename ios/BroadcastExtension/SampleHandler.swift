@@ -46,8 +46,13 @@ class SampleHandler: RPBroadcastSampleHandler {
     /// コンテナ URL(診断ファイル書き込みにも使う)。
     private var containerUrl: URL?
 
-    /// 一度の送信で扱う最大バイト数(IPC 上限の安全側)。
-    private let maxChunkBytes = 8192
+    /// 一度の送信(1 データグラム)で扱う最大バイト数。
+    ///
+    /// iOS/Darwin の AF_UNIX SOCK_DGRAM は 1 データグラムの最大長が
+    /// `net.local.dgram.maxdgram`(既定 2048 byte)に制限される。これを超えると
+    /// `sendto` が errno=40(EMSGSIZE)で失敗し、1 バイトも届かない。
+    /// 余裕を持って 1024 byte(= ステレオ 256 サンプル分、4 byte 境界)に刻む。
+    private let maxChunkBytes = 1024
 
     // MARK: - 診断カウンタ
 
@@ -141,6 +146,11 @@ class SampleHandler: RPBroadcastSampleHandler {
 
         let flags = fcntl(fd, F_GETFL, 0)
         _ = fcntl(fd, F_SETFL, flags | O_NONBLOCK)
+
+        // 小さいデータグラムを多数送るので送信バッファを広げておく
+        // (受信側が一瞬詰まっても EAGAIN で落とさず捌けるように)。
+        var sndBuf: Int32 = 256 * 1024
+        setsockopt(fd, SOL_SOCKET, SO_SNDBUF, &sndBuf, socklen_t(MemoryLayout<Int32>.size))
 
         var addr = sockaddr_un()
         addr.sun_family = sa_family_t(AF_UNIX)
