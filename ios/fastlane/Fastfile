@@ -4,38 +4,73 @@ default_platform(:ios)
 # App Store Connect API 経由で事前に作成・インストールするための lane。
 #
 # 背景: xcodebuild の archive + -allowProvisioningUpdates は Extension の新規
-# App ID 作成時に "Authentication failed: bearer token" で失敗する(API キーは
-# App Manager でアップロードには使えるのに、xcodebuild 内部の自動プロビジョニング
-# 認証だけ通らない)。fastlane は同じ API キーで App Store Connect API を直接叩く
-# ため、ここでプロファイルまで作ってインストールしておけば、archive の自動署名は
-# 「既存プロファイルを使う」だけになり作成が走らず失敗を回避できる。
+# App ID 作成時に "Authentication failed: bearer token" で失敗する。fastlane の
+# produce は Apple ID(username)を要求し API キー単独では使えないため、
+# API キーで直接叩ける Spaceship::ConnectAPI で App ID と App Groups を用意し、
+# sigh で App Store プロファイルを作成・インストールする。これで後段 archive の
+# 自動署名は「既存プロファイルを使う」だけになり作成が走らず失敗を回避する。
+
+require "spaceship"
 
 platform :ios do
   desc "Register Broadcast Extension App ID (+App Group) and create/install its App Store profile"
   lane :provision_extension do
+    ext_id = "com.roto0504.localAudioSync.BroadcastExtension"
+    group_id = "group.com.roto0504.localAudioSync"
+
+    # fastlane アクション(sigh)用にコンテキストへも API キーを設定
     api_key = app_store_connect_api_key(
       key_id: ENV["ASC_KEY_ID"],
       issuer_id: ENV["ASC_ISSUER_ID"],
       key_filepath: ENV["ASC_KEY_PATH"]
     )
 
-    ext_id = "com.roto0504.localAudioSync.BroadcastExtension"
-
-    # 1) Developer portal に Extension の識別子を登録し、App Groups を有効化する。
-    #    skip_itc: true で App Store Connect の「アプリ」は作らず、識別子だけ登録。
-    # produce は api_key パラメータを持たない。app_store_connect_api_key が
-    # レーンコンテキストへ設定したキーを自動で使う。
-    produce(
-      app_identifier: ext_id,
-      app_name: "Local Audio Sync Broadcast Ext",
-      skip_itc: true,
-      enable_services: {
-        app_group: "on"
-      }
+    # Spaceship を API キートークンで認証
+    Spaceship::ConnectAPI.token = Spaceship::ConnectAPI::Token.create(
+      key_id: ENV["ASC_KEY_ID"],
+      issuer_id: ENV["ASC_ISSUER_ID"],
+      filepath: File.expand_path(ENV["ASC_KEY_PATH"])
     )
 
-    # 2) App Store 配布プロビジョニングプロファイルを作成し、ローカルへインストール。
-    #    force: true で内容が古ければ作り直す。development/adhoc: false = App Store。
+    # 1) Bundle ID を検索、無ければ作成
+    bundle = Spaceship::ConnectAPI::BundleId.all.find { |b| b.identifier == ext_id }
+    if bundle.nil?
+      bundle = Spaceship::ConnectAPI::BundleId.create(
+        name: "Local Audio Sync Broadcast Ext",
+        identifier: ext_id,
+        seed_id: ENV["ASC_TEAM_ID"]
+      )
+      UI.success("Created Bundle ID: #{ext_id}")
+    else
+      UI.message("Bundle ID already exists: #{ext_id}")
+    end
+
+    # 2) App Groups capability を有効化(既に有効なら無視)
+    begin
+      bundle.create_capability(Spaceship::ConnectAPI::BundleIdCapability::Type::APP_GROUPS)
+      UI.success("Enabled App Groups capability")
+    rescue => e
+      UI.message("App Groups capability: #{e.message}")
+    end
+
+    # 3) 既存の App Group を Bundle ID に関連付ける(可能なら)
+    begin
+      group = Spaceship::ConnectAPI::AppGroup.all.find { |g| g.identifier == group_id }
+      if group
+        Spaceship::ConnectAPI.create_bundle_id_capability(
+          bundle_id_id: bundle.id,
+          capability_type: Spaceship::ConnectAPI::BundleIdCapability::Type::APP_GROUPS,
+          app_group_ids: [group.id]
+        )
+        UI.success("Associated App Group #{group_id}")
+      else
+        UI.important("App Group #{group_id} が見つかりません(ポータルで作成が必要)")
+      end
+    rescue => e
+      UI.message("App Group association: #{e.message}")
+    end
+
+    # 4) App Store 配布プロビジョニングプロファイルを作成し、ローカルへインストール
     sigh(
       app_identifier: ext_id,
       platform: "ios",

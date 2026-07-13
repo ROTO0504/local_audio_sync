@@ -109,6 +109,7 @@ jobs:
           ASC_KEY_ID: ${{ secrets.ASC_KEY_ID }}
           ASC_ISSUER_ID: ${{ secrets.ASC_ISSUER_ID }}
           ASC_KEY_PATH: /Users/runner/private_keys/AuthKey_${{ secrets.ASC_KEY_ID }}.p8
+          ASC_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
         run: fastlane provision_extension
 
       - name: Archive (automatic signing)
