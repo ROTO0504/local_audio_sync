@@ -23,14 +23,15 @@ platform :ios do
 
     # 1) Developer portal に Extension の識別子を登録し、App Groups を有効化する。
     #    skip_itc: true で App Store Connect の「アプリ」は作らず、識別子だけ登録。
+    # produce は api_key パラメータを持たない。app_store_connect_api_key が
+    # レーンコンテキストへ設定したキーを自動で使う。
     produce(
       app_identifier: ext_id,
       app_name: "Local Audio Sync Broadcast Ext",
       skip_itc: true,
       enable_services: {
         app_group: "on"
-      },
-      api_key: api_key
+      }
     )
 
     # 2) App Store 配布プロビジョニングプロファイルを作成し、ローカルへインストール。
