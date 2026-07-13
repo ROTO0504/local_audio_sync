@@ -5,22 +5,19 @@ import Darwin
 /// Broadcast Upload Extension の本体。
 ///
 /// ReplayKit から渡される CMSampleBuffer のうち `audioApp`(他アプリも含む
-/// デバイス全体の出力音声)を取り出し、**必ず 48kHz / PCM16 / ステレオ /
-/// インターリーブ**へ正規化して、App Group コンテナ内の UNIX Domain Socket
-/// (SOCK_DGRAM)経由でメインアプリへ転送する。
+/// デバイス全体の出力音声)を取り出し、**AVAudioConverter で 48kHz / PCM16 /
+/// ステレオ / インターリーブへ正しく変換**して、App Group コンテナ内の UNIX
+/// Domain Socket(SOCK_DGRAM)経由でメインアプリへ転送する。
 ///
-/// 以前はサンプルレートが 48000 以外だと全バッファを無言でスキップしていたが、
-/// iOS の `.audioApp` は端末・再生元によって 44100Hz で来ることがあり、その場合
-/// 1 フレームも届かず「音が何も来ない」状態になっていた。ここでは任意レートを
-/// 線形補間で 48kHz へリサンプルし、モノは複製してステレオ化して必ず送る。
+/// 以前は手書きで Int16↔Float 変換・インターリーブ判定・線形リサンプルを
+/// 行っていたが、planar/interleaved の取り違えや補間アーティファクトで
+/// 「ザー」というノイズが乗っていた。iOS 標準の AVAudioConverter に委ねることで
+/// 任意の入力フォーマット(44100Hz Int16 など)を高品質に正規化する。
 ///
 /// 50MB のメモリ制限があるため、Opus エンコードや UDP 送信などの重い処理は
 /// 行わず、フォーマット正規化と UDS 転送のみに専念する。
 ///
 /// 診断: App Group コンテナに `broadcast_status.txt` を定期的に書き出す。
-/// メインアプリがこれを読み UI に表示することで、Xcode コンソール無しでも
-/// 「コンテナ取得可否 / .audioApp 到達数 / 実フォーマット / 送信バイト / errno」
-/// を確認でき、無音時の原因切り分けができる。
 @objc(SampleHandler)
 class SampleHandler: RPBroadcastSampleHandler {
 
@@ -33,9 +30,18 @@ class SampleHandler: RPBroadcastSampleHandler {
     /// 診断ファイル名。
     private let statusName = "broadcast_status.txt"
 
-    /// 出力フォーマット(メインアプリ / Opus パイプラインの前提)。
-    private let outSampleRate: Double = 48_000
-    private let outChannels = 2
+    /// 出力フォーマット(メインアプリ / Opus パイプラインの前提):
+    /// 48kHz / Int16 / ステレオ / インターリーブ。
+    private let outFormat = AVAudioFormat(
+        commonFormat: .pcmFormatInt16,
+        sampleRate: 48_000,
+        channels: 2,
+        interleaved: true
+    )!
+
+    /// 入力フォーマット→出力フォーマットのコンバータ(入力形式が変わるまで使い回す)。
+    private var converter: AVAudioConverter?
+    private var converterInFormat: AVAudioFormat?
 
     /// 送信用ソケット FD。生成失敗時は -1。
     private var sendFd: Int32 = -1
@@ -65,9 +71,9 @@ class SampleHandler: RPBroadcastSampleHandler {
     private var lastInRate: Double = 0
     private var lastInCh = 0
     private var lastInFloat = false
+    private var lastInInterleaved = false
     private var lastErrno: Int32 = 0
     private var startedFlag = false
-    /// 直近の診断書き込みからの経過を測るためのバッファカウンタ。
     private var buffersSinceStatus = 0
 
     private var errorCount = 0
@@ -116,7 +122,6 @@ class SampleHandler: RPBroadcastSampleHandler {
             sendAudioBuffer(sampleBuffer)
         }
 
-        // 25 バッファごと(概ね 0.5 秒ごと)に診断を書き出す。
         buffersSinceStatus += 1
         if buffersSinceStatus >= 25 {
             buffersSinceStatus = 0
@@ -147,8 +152,7 @@ class SampleHandler: RPBroadcastSampleHandler {
         let flags = fcntl(fd, F_GETFL, 0)
         _ = fcntl(fd, F_SETFL, flags | O_NONBLOCK)
 
-        // 小さいデータグラムを多数送るので送信バッファを広げておく
-        // (受信側が一瞬詰まっても EAGAIN で落とさず捌けるように)。
+        // 小さいデータグラムを多数送るので送信バッファを広げておく。
         var sndBuf: Int32 = 256 * 1024
         setsockopt(fd, SOL_SOCKET, SO_SNDBUF, &sndBuf, socklen_t(MemoryLayout<Int32>.size))
 
@@ -173,76 +177,108 @@ class SampleHandler: RPBroadcastSampleHandler {
         serverAddr = addr
     }
 
-    // MARK: - 音声バッファ送信
+    // MARK: - 音声バッファ送信(AVAudioConverter で正規化)
 
     private func sendAudioBuffer(_ sampleBuffer: CMSampleBuffer) {
-        guard let blockBuffer = CMSampleBufferGetDataBuffer(sampleBuffer) else { return }
-        let byteLength = CMBlockBufferGetDataLength(blockBuffer)
-        guard byteLength > 0 else { return }
-
-        var channelCount = 2
-        var isFloat = true
-        var isInterleaved = false
-        var sampleRate: Float64 = 48_000
-        var bitsPerChannel = 32
-
-        if let fmtDesc = CMSampleBufferGetFormatDescription(sampleBuffer),
-           let asbd = CMAudioFormatDescriptionGetStreamBasicDescription(fmtDesc) {
-            channelCount = Int(asbd.pointee.mChannelsPerFrame)
-            isFloat = (asbd.pointee.mFormatFlags & kAudioFormatFlagIsFloat) != 0
-            isInterleaved =
-                (asbd.pointee.mFormatFlags & kAudioFormatFlagIsNonInterleaved) == 0
-            sampleRate = asbd.pointee.mSampleRate
-            bitsPerChannel = Int(asbd.pointee.mBitsPerChannel)
-        }
-
-        lastInRate = sampleRate
-        lastInCh = channelCount
-        lastInFloat = isFloat
-
-        // 生バイトを連続領域へコピー
-        var rawBytes = [UInt8](repeating: 0, count: byteLength)
-        let copyStatus = rawBytes.withUnsafeMutableBytes { ptr -> OSStatus in
-            return CMBlockBufferCopyDataBytes(
-                blockBuffer,
-                atOffset: 0,
-                dataLength: byteLength,
-                destination: ptr.baseAddress!
-            )
-        }
-        guard copyStatus == kCMBlockBufferNoErr else {
-            logErrorOnce("CMBlockBufferCopyDataBytes 失敗: \(copyStatus)")
+        guard let fmtDesc = CMSampleBufferGetFormatDescription(sampleBuffer),
+              let asbd = CMAudioFormatDescriptionGetStreamBasicDescription(fmtDesc) else {
             return
         }
 
-        // 1) 入力を「ステレオ Float フレーム列」へデコード(任意レートのまま)
-        let stereo = decodeToStereoFloat(
-            bytes: rawBytes,
-            channelCount: max(1, channelCount),
-            isFloat: isFloat,
-            isInterleaved: isInterleaved,
-            bitsPerChannel: bitsPerChannel
+        lastInRate = asbd.pointee.mSampleRate
+        lastInCh = Int(asbd.pointee.mChannelsPerFrame)
+        lastInFloat = (asbd.pointee.mFormatFlags & kAudioFormatFlagIsFloat) != 0
+        lastInInterleaved =
+            (asbd.pointee.mFormatFlags & kAudioFormatFlagIsNonInterleaved) == 0
+
+        // 入力 AVAudioFormat を ASBD から生成
+        guard let inFormat = AVAudioFormat(streamDescription: asbd) else {
+            logErrorOnce("入力フォーマット生成失敗")
+            return
+        }
+
+        // コンバータをキャッシュ(入力フォーマットが変わったら作り直す)
+        if converter == nil || converterInFormat != inFormat {
+            converter = AVAudioConverter(from: inFormat, to: outFormat)
+            converterInFormat = inFormat
+        }
+        guard let converter = converter else {
+            logErrorOnce("コンバータ生成失敗")
+            return
+        }
+
+        let numSamples = CMSampleBufferGetNumSamples(sampleBuffer)
+        guard numSamples > 0,
+              let inBuffer = AVAudioPCMBuffer(
+                pcmFormat: inFormat,
+                frameCapacity: AVAudioFrameCount(numSamples)
+              ) else {
+            return
+        }
+        inBuffer.frameLength = AVAudioFrameCount(numSamples)
+
+        // CMSampleBuffer の PCM を入力バッファの AudioBufferList へコピー
+        let copyStatus = CMSampleBufferCopyPCMDataIntoAudioBufferList(
+            sampleBuffer,
+            at: 0,
+            frameCount: Int32(numSamples),
+            into: inBuffer.mutableAudioBufferList
         )
-        guard !stereo.isEmpty else { return }
+        guard copyStatus == noErr else {
+            logErrorOnce("CMSampleBufferCopyPCMData 失敗: \(copyStatus)")
+            return
+        }
 
-        // 2) 48kHz へ線形リサンプル(既に 48k ならそのまま)
-        let resampled = resampleStereo(
-            frames: stereo, fromRate: sampleRate, toRate: outSampleRate
-        )
-        guard !resampled.isEmpty else { return }
+        // 出力バッファ(リサンプルで増える分の余裕を持たせる)
+        let outCapacity = AVAudioFrameCount(
+            Double(numSamples) * outFormat.sampleRate / inFormat.sampleRate
+        ) + 32
+        guard let outBuffer = AVAudioPCMBuffer(
+            pcmFormat: outFormat,
+            frameCapacity: outCapacity
+        ) else {
+            return
+        }
 
-        // 3) Int16 インターリーブのバイト列へ
-        let pcm16Bytes = floatStereoToInt16Bytes(resampled)
-        guard !pcm16Bytes.isEmpty else { return }
+        var error: NSError?
+        var provided = false
+        let inputBlock: AVAudioConverterInputBlock = { _, outStatus in
+            if provided {
+                outStatus.pointee = .noDataNow
+                return nil
+            }
+            provided = true
+            outStatus.pointee = .haveData
+            return inBuffer
+        }
+        let status = converter.convert(to: outBuffer, error: &error, withInputFrom: inputBlock)
+        if status == .error || error != nil {
+            logErrorOnce("convert 失敗: \(String(describing: error))")
+            return
+        }
+        guard outBuffer.frameLength > 0 else { return }
 
-        // 4) チャンク分割(ステレオ 1 サンプル = 4 byte 境界を維持)して送信
+        // インターリーブ出力なので mBuffers[0] に [L R L R ...] が詰まっている。
+        // バイト数は frameLength から算出する(mDataByteSize は容量値が残る場合が
+        // あるため信頼しない)。ステレオ Int16 = 4 byte/フレーム。
+        let audioBuffer = outBuffer.audioBufferList.pointee.mBuffers
+        guard let mData = audioBuffer.mData else { return }
+        let dataSize = Int(outBuffer.frameLength) * 4
+        guard dataSize > 0, dataSize <= Int(audioBuffer.mDataByteSize) else { return }
+
+        var bytes = [UInt8](repeating: 0, count: dataSize)
+        bytes.withUnsafeMutableBytes { dst in
+            memcpy(dst.baseAddress!, mData, dataSize)
+        }
+
+        // チャンク分割(ステレオ 1 サンプル = 4 byte 境界を維持)して送信
         var offset = 0
-        while offset < pcm16Bytes.count {
-            let remaining = pcm16Bytes.count - offset
+        while offset < bytes.count {
+            let remaining = bytes.count - offset
             let chunkLen = min(remaining, maxChunkBytes)
             let aligned = chunkLen - (chunkLen % 4)
             if aligned <= 0 { break }
-            let chunk = Array(pcm16Bytes[offset ..< (offset + aligned)])
+            let chunk = Array(bytes[offset ..< (offset + aligned)])
             sendChunk(chunk)
             offset += aligned
         }
@@ -277,121 +313,6 @@ class SampleHandler: RPBroadcastSampleHandler {
         }
     }
 
-    // MARK: - フォーマット正規化
-
-    /// 入力バイト列を「ステレオ Float フレーム列」[L0, R0, L1, R1, ...] へデコードする。
-    /// float / Int16、interleaved / planar、モノ/多チャンネルを吸収する。
-    private func decodeToStereoFloat(bytes: [UInt8],
-                                     channelCount: Int,
-                                     isFloat: Bool,
-                                     isInterleaved: Bool,
-                                     bitsPerChannel: Int) -> [Float] {
-        let ch = max(1, channelCount)
-        var out: [Float] = []
-
-        if isFloat {
-            let totalSamples = bytes.count / 4
-            let framesPerChannel = totalSamples / ch
-            if framesPerChannel == 0 { return [] }
-            out.reserveCapacity(framesPerChannel * 2)
-            bytes.withUnsafeBytes { rawPtr in
-                let floats = rawPtr.bindMemory(to: Float32.self)
-                for frame in 0 ..< framesPerChannel {
-                    let l = sampleFloat(floats, frame: frame, ch: 0, chCount: ch,
-                                        framesPerChannel: framesPerChannel,
-                                        isInterleaved: isInterleaved, total: totalSamples)
-                    let r = ch >= 2
-                        ? sampleFloat(floats, frame: frame, ch: 1, chCount: ch,
-                                      framesPerChannel: framesPerChannel,
-                                      isInterleaved: isInterleaved, total: totalSamples)
-                        : l
-                    out.append(l)
-                    out.append(r)
-                }
-            }
-        } else {
-            // Int16(16bit 前提。それ以外の整数深度は稀なので 16bit として扱う)
-            let bytesPerSample = max(2, bitsPerChannel / 8)
-            if bytesPerSample != 2 { return [] } // 想定外の深度は送らない(診断で判別)
-            let totalSamples = bytes.count / 2
-            let framesPerChannel = totalSamples / ch
-            if framesPerChannel == 0 { return [] }
-            out.reserveCapacity(framesPerChannel * 2)
-            bytes.withUnsafeBytes { rawPtr in
-                let ints = rawPtr.bindMemory(to: Int16.self)
-                for frame in 0 ..< framesPerChannel {
-                    let l = sampleInt16(ints, frame: frame, ch: 0, chCount: ch,
-                                        framesPerChannel: framesPerChannel,
-                                        isInterleaved: isInterleaved, total: totalSamples)
-                    let r = ch >= 2
-                        ? sampleInt16(ints, frame: frame, ch: 1, chCount: ch,
-                                      framesPerChannel: framesPerChannel,
-                                      isInterleaved: isInterleaved, total: totalSamples)
-                        : l
-                    out.append(l)
-                    out.append(r)
-                }
-            }
-        }
-        return out
-    }
-
-    private func sampleFloat(_ p: UnsafeBufferPointer<Float32>, frame: Int, ch: Int,
-                             chCount: Int, framesPerChannel: Int,
-                             isInterleaved: Bool, total: Int) -> Float {
-        let idx = isInterleaved ? (frame * chCount + ch) : (ch * framesPerChannel + frame)
-        guard idx < total else { return 0 }
-        var f = p[idx]
-        if f > 1.0 { f = 1.0 } else if f < -1.0 { f = -1.0 }
-        return f
-    }
-
-    private func sampleInt16(_ p: UnsafeBufferPointer<Int16>, frame: Int, ch: Int,
-                             chCount: Int, framesPerChannel: Int,
-                             isInterleaved: Bool, total: Int) -> Float {
-        let idx = isInterleaved ? (frame * chCount + ch) : (ch * framesPerChannel + frame)
-        guard idx < total else { return 0 }
-        return Float(p[idx]) / 32_768.0
-    }
-
-    /// ステレオ Float フレーム列を線形補間で fromRate → toRate へ変換する。
-    private func resampleStereo(frames: [Float], fromRate: Double, toRate: Double) -> [Float] {
-        if abs(fromRate - toRate) < 1.0 || fromRate <= 0 { return frames }
-        let inFrames = frames.count / 2
-        if inFrames < 2 { return frames }
-        let ratio = toRate / fromRate
-        let outFrames = Int(Double(inFrames) * ratio)
-        if outFrames <= 0 { return [] }
-        var out = [Float](repeating: 0, count: outFrames * 2)
-        let step = fromRate / toRate // 入力フレーム / 出力フレーム
-        var pos = 0.0
-        for i in 0 ..< outFrames {
-            let base = Int(pos)
-            let frac = Float(pos - Double(base))
-            let i0 = min(base, inFrames - 1)
-            let i1 = min(base + 1, inFrames - 1)
-            let l0 = frames[i0 * 2],     r0 = frames[i0 * 2 + 1]
-            let l1 = frames[i1 * 2],     r1 = frames[i1 * 2 + 1]
-            out[i * 2]     = l0 + (l1 - l0) * frac
-            out[i * 2 + 1] = r0 + (r1 - r0) * frac
-            pos += step
-        }
-        return out
-    }
-
-    private func floatStereoToInt16Bytes(_ frames: [Float]) -> [UInt8] {
-        var out = [UInt8](repeating: 0, count: frames.count * 2)
-        out.withUnsafeMutableBytes { raw in
-            let dst = raw.bindMemory(to: Int16.self)
-            for i in 0 ..< frames.count {
-                var f = frames[i]
-                if f > 1.0 { f = 1.0 } else if f < -1.0 { f = -1.0 }
-                dst[i] = Int16(f * 32_767)
-            }
-        }
-        return out
-    }
-
     // MARK: - 診断ファイル
 
     private func writeStatus() {
@@ -410,6 +331,7 @@ class SampleHandler: RPBroadcastSampleHandler {
         inRate=\(Int(lastInRate))
         inCh=\(lastInCh)
         inFloat=\(lastInFloat ? 1 : 0)
+        inItlv=\(lastInInterleaved ? 1 : 0)
         outChunks=\(outChunks)
         outBytes=\(outBytes)
         lastErrno=\(lastErrno)
