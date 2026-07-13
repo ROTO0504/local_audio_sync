@@ -72,11 +72,11 @@ platform :ios do
     end
 
     # 4) App Store 配布プロビジョニングプロファイルを作成し、ローカルへインストール
+    # development / adhoc を指定しない = App Store 配布プロファイル(既定)。
+    # 両方 false を渡すと "conflict between options" になるため省略する。
     sigh(
       app_identifier: ext_id,
       platform: "ios",
-      development: false,
-      adhoc: false,
       force: true,
       api_key: api_key
     )
