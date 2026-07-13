@@ -38,7 +38,8 @@ platform :ios do
       bundle = Spaceship::ConnectAPI::BundleId.create(
         name: "Local Audio Sync Broadcast Ext",
         identifier: ext_id,
-        seed_id: ENV["ASC_TEAM_ID"]
+        seed_id: ENV["ASC_TEAM_ID"],
+        platform: "IOS"
       )
       UI.success("Created Bundle ID: #{ext_id}")
     else
