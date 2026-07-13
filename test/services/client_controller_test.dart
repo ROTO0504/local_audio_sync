@@ -249,7 +249,7 @@ void main() {
       );
     });
 
-    test('接続後に喪失すると再探索へ戻る', () async {
+    test('接続後にビーコンが途絶えても接続は維持される', () async {
       SharedPreferences.setMockInitialValues({});
       container = ProviderContainer();
       controller = build();
@@ -263,7 +263,34 @@ void main() {
         ClientConnectionStatus.connected,
       );
 
+      // ビーコンの間欠途絶は接続断ではない。ここで切ると 5〜6 秒周期の
+      // 再接続ループに陥りノイズ・音切れの原因になるため、接続が健全なら維持する。
       discovery.emitLost();
+      await pumpEventQueue();
+
+      expect(sender.isConnected, isTrue);
+      expect(
+        container.read(clientStateProvider).status,
+        ClientConnectionStatus.connected,
+      );
+    });
+
+    test('PONG 応答途絶(onHubUnresponsive)で切断し再探索へ戻る', () async {
+      SharedPreferences.setMockInitialValues({});
+      container = ProviderContainer();
+      controller = build();
+      await controller.start();
+      await pumpEventQueue();
+
+      await controller.connectTo(hubA);
+      await pumpEventQueue();
+      expect(
+        container.read(clientStateProvider).status,
+        ClientConnectionStatus.connected,
+      );
+
+      // 実際の Hub 死は PONG タイムアウトで検出する(ビーコン途絶ではなく)。
+      sender.onHubUnresponsive?.call();
       await pumpEventQueue();
 
       expect(sender.isConnected, isFalse);

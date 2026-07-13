@@ -298,11 +298,10 @@ class ClientController {
         await _lastHubStore.saveLastHub(hub);
       }
 
-      // iOS 以外は接続後に直ちにキャプチャ起動。
-      // iOS は start() で起動済み(Extension からの PCM 待ち)。
-      if (!_isIOS) {
-        await _startCapturePipeline();
-      }
+      // iOS も含めキャプチャ(受信)を確実に起動する。冪等なので既に稼働中なら
+      // 何もしない。iOS で受信リスナが何らかの理由で止まっていても、接続時に
+      // ここで復帰し「接続しても音が来ない」状態を防ぐ。
+      await _startCapturePipeline();
     } catch (e) {
       notifier.setDisconnected();
       _emit('Hub への接続に失敗しました: $e');
@@ -349,6 +348,10 @@ class ClientController {
   // ---- キャプチャパイプライン ----
 
   Future<void> _startCapturePipeline() async {
+    // 冪等: 既に受信・購読中なら何もしない。iOS の自己修復ポーリングや
+    // connectTo から何度呼ばれても二重購読・二重起動しない。
+    if (_captureSub != null && _capture.isCapturing) return;
+
     // Android のみ MediaProjection の許可が必要(iOS は Picker、他は不要)。
     if (_isAndroid) {
       final granted = await _capture.requestPermission();
@@ -373,6 +376,8 @@ class ClientController {
       return;
     }
 
+    // 念のため古い購読が残っていれば張り替える(再起動時の二重購読防止)。
+    await _captureSub?.cancel();
     _captureSub = _capture.pcmStream.listen(
       (pcmBytes) {
         if (pcmBytes.length != kBytesPerChunk) return; // 念のため
@@ -393,6 +398,10 @@ class ClientController {
 
   /// キャプチャだけを止める(Hub との接続・PING は維持)。
   Future<void> _stopCaptureOnly() async {
+    // iOS は Extension が配信を続けるため、切断・一時停止・Hub 切替では受信を
+    // 止めない(送信は _sender.isConnected ゲートで抑止)。ここで止めて放置すると
+    // 受信リスナが二度と復帰せず「接続しても音が来ない」状態になる(既知の穴)。
+    if (_isIOS) return;
     if (_isAndroid) {
       try {
         await _broadcastChannel.invokeMethod('stopBroadcast');
@@ -405,6 +414,12 @@ class ClientController {
 
   Future<void> _refreshBroadcastingState() async {
     if (!_isIOS) return;
+    // 自己修復: 受信リスナが止まっていたら復帰させる。iOS で「接続しても音が
+    // 来ない/たまにしか来ない」の主因(受信リスナ停止)を毎秒チェックで塞ぐ。
+    if (_started && !_capture.isCapturing) {
+      debugPrint('[ClientController] iOS 受信リスナが停止 → 復帰させます');
+      await _startCapturePipeline();
+    }
     final active = await _capture.isBroadcastingActive();
     if (active != _ref.read(clientStateProvider).broadcastingActive) {
       _clientState.setBroadcasting(active);
@@ -470,9 +485,13 @@ class ClientController {
         await _broadcastChannel.invokeMethod('stopBroadcast');
       } catch (_) {}
     }
-    await _captureSub?.cancel();
-    _captureSub = null;
-    await _capture.stop();
+    // iOS は受信リスナを維持(Extension は配信継続。再接続で即座に音が復帰)。
+    // 受信の完全停止は画面離脱時の stop() が担う。
+    if (!_isIOS) {
+      await _captureSub?.cancel();
+      _captureSub = null;
+      await _capture.stop();
+    }
     _sender.disconnect();
     _connectingToHub = false;
     _manualHub = null;
@@ -490,6 +509,10 @@ class ClientController {
     _pruneTimer?.cancel();
     _pruneTimer = null;
     await _stopDiscovery();
+    // iOS は disconnect で受信を残すため、ここで確実に受信リスナを止める。
+    await _captureSub?.cancel();
+    _captureSub = null;
+    await _capture.stop();
     await disconnect();
     _started = false;
   }
