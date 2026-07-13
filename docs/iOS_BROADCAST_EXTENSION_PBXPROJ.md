@@ -81,10 +81,35 @@ grep -c "com.apple.product-type.app-extension" /tmp/pbx/project.pbxproj  # => 1
   (`CODE_SIGN_STYLE = Manual` / `CODE_SIGN_IDENTITY = "Apple Distribution"` /
   `PROVISIONING_PROFILE_SPECIFIER`)を除去し自動署名へ正規化
 
-**残る前提**: `-allowProvisioningUpdates` が Extension の **新規 App ID +
-App Group 権限 + プロファイル**を自動生成できること。API キーの権限が不足
-(`Authentication failed: Make sure a bearer token was provided`)する場合は、
-(a) App Store Connect の API キーを **App Manager** 以上の役割にする、または
-(b) Apple Developer ポータルで App ID `...BroadcastExtension`(App Groups 有効)+
-App Store プロファイルを手動作成して CI に投入する、のいずれかが必要。
-ローカル実機テスト(Xcode / Apple ID 署名)は API キー不要でこの制約を受けない。
+### 実際に通った構成(2026-07-13、TestFlight アップロード成功)
+
+xcodebuild の `-allowProvisioningUpdates` は Extension の新規 App ID 作成で
+`Authentication failed: bearer token` を出して**使えなかった**(API キーは
+App Manager でアップロードには使えるのに、xcodebuild 内部の自動プロビジョニング
+認証だけ通らない)。代わりに **fastlane + Spaceship::ConnectAPI(同じ API キー)
+で署名資産を事前作成し、手動署名で使う**構成にしたら通った:
+
+1. **`ios/fastlane/Fastfile` の `provision_extension` lane**(archive 前に実行):
+   - `app_store_connect_api_key` でキーをコンテキストへ設定
+   - `Spaceship::ConnectAPI::Token.create` + `Spaceship::ConnectAPI.token = ...` で認証
+   - `Spaceship::ConnectAPI::BundleId.create(name:, identifier:, seed_id:, platform: "IOS")`
+     で Extension の Bundle ID を作成(**`platform` 必須**)
+   - `bundle.create_capability(Spaceship::ConnectAPI::BundleIdCapability::Type::APP_GROUPS)`
+     で App Groups capability を有効化
+   - `sigh(app_identifier:, platform: "ios", force: true, api_key:)` で App Store
+     プロファイルを作成・インストール。**名前は既定の `"<bundleid> AppStore"`**
+     (`provisioning_name` は既存プロファイルがあると無視される)
+2. **pbxproj**: Runner / Extension の Release を**手動署名**に(`add_broadcast_extension.rb`
+   末尾で設定):`CODE_SIGN_STYLE = Manual` / `CODE_SIGN_IDENTITY = "Apple Distribution"` /
+   `PROVISIONING_PROFILE_SPECIFIER`(Runner=`"Local Audio Sync App Store"`、
+   Extension=`"com.roto0504.localAudioSync.BroadcastExtension AppStore"`)。
+   自動署名は archive で「開発用」プロファイルを探して失敗するため手動が必須。
+3. **archive**: `-allowProvisioningUpdates` を付けず `DEVELOPMENT_TEAM=...` のみ。
+   **ExportOptions**: `signingStyle = manual` + `provisioningProfiles` に両ターゲット分。
+
+**唯一の手作業(Apple の制約)**: App Group の**特定グループの関連付け**は
+App Store Connect API(API キー)では操作できず**ポータル専用**。Bundle ID は
+自動作成されるので、ポータルの Identifiers → その Bundle ID → App Groups を
+Edit して `group.<...>` にチェック→Save する **1 回だけ**の手作業が要る。
+これをやると `Provisioning profile "..." doesn't support the ... App Group` が消える。
+以降の配信は `gh workflow run testflight.yml -f platform=ios` だけで全自動。
