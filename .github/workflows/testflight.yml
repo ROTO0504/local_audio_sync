@@ -65,12 +65,6 @@ jobs:
         run: |
           mkdir -p "$HOME/private_keys"
           printf '%s' "$ASC_KEY_P8" > "$HOME/private_keys/AuthKey_${ASC_KEY_ID}.p8"
-          # archive の -allowProvisioningUpdates はプロビジョニング処理が既定の
-          # 場所 ~/.appstoreconnect/private_keys/ からキーを探すため、そちらにも置く
-          # (-authenticationKeyPath はエクスポート/アップロードには効くが、
-          #  archive の自動プロファイル生成では参照されないことがある)。
-          mkdir -p "$HOME/.appstoreconnect/private_keys"
-          printf '%s' "$ASC_KEY_P8" > "$HOME/.appstoreconnect/private_keys/AuthKey_${ASC_KEY_ID}.p8"
 
       - name: Import Apple Distribution certificate
         env:
@@ -168,12 +162,6 @@ jobs:
         run: |
           mkdir -p "$HOME/private_keys"
           printf '%s' "$ASC_KEY_P8" > "$HOME/private_keys/AuthKey_${ASC_KEY_ID}.p8"
-          # archive の -allowProvisioningUpdates はプロビジョニング処理が既定の
-          # 場所 ~/.appstoreconnect/private_keys/ からキーを探すため、そちらにも置く
-          # (-authenticationKeyPath はエクスポート/アップロードには効くが、
-          #  archive の自動プロファイル生成では参照されないことがある)。
-          mkdir -p "$HOME/.appstoreconnect/private_keys"
-          printf '%s' "$ASC_KEY_P8" > "$HOME/.appstoreconnect/private_keys/AuthKey_${ASC_KEY_ID}.p8"
 
       - name: Import distribution certificates
         # macOS の App Store 配布は .app 署名(Apple Distribution)と .pkg 署名
