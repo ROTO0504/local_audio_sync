@@ -37,6 +37,75 @@ import UIKit
     }
 }
 
+/// `RPSystemBroadcastPickerView` を **プログラム的に** 起動するコントローラ。
+///
+/// UiKitView としてボタンを埋め込む方式は、iOS 18/26 で
+/// `RPSystemBroadcastPickerView` 内部の UIButton が描画されない・タップが
+/// 伝搬しないことがあり、ユーザーからは「押せない・ボタンが無い」状態になる。
+///
+/// そこで、通常の Flutter ボタンから MethodChannel 経由でこのコントローラを呼び、
+/// キーウィンドウにほぼ不可視で追加した Picker の内部ボタンへ `touchUpInside` を
+/// 送ることでシステムの配信シートを開く。これで描画・タップは Flutter 側で完全に
+/// 制御でき、確実に配信を開始できる。
+@objc class BroadcastPickerController: NSObject {
+
+    /// 生成した Picker を保持(再利用 & 解放防止)。
+    private var picker: RPSystemBroadcastPickerView?
+
+    /// 配信シートを表示する。`preferredExtension` があれば対象 Extension を優先。
+    @objc func present(preferredExtension: String?) {
+        DispatchQueue.main.async {
+            guard let window = BroadcastPickerController.keyWindow() else { return }
+
+            let picker: RPSystemBroadcastPickerView
+            if let existing = self.picker {
+                picker = existing
+            } else {
+                // 画面外・ほぼ透明でウィンドウ階層に置く(ビュー階層に居ないと
+                // 内部ボタンの sendActions がシートを提示できない)。
+                picker = RPSystemBroadcastPickerView(
+                    frame: CGRect(x: -2000, y: -2000, width: 1, height: 1)
+                )
+                picker.showsMicrophoneButton = false
+                picker.alpha = 0.01
+                window.addSubview(picker)
+                self.picker = picker
+            }
+
+            if let ext = preferredExtension, !ext.isEmpty {
+                picker.preferredExtension = ext
+            }
+
+            // 内部の UIButton を再帰的に探して touchUpInside を送る。
+            // iOS のバージョンでボタンの入れ子の深さが変わるため再帰で探索する。
+            if let button = BroadcastPickerController.findButton(in: picker) {
+                button.sendActions(for: .touchUpInside)
+            }
+        }
+    }
+
+    private static func findButton(in view: UIView) -> UIButton? {
+        if let button = view as? UIButton { return button }
+        for sub in view.subviews {
+            if let found = findButton(in: sub) { return found }
+        }
+        return nil
+    }
+
+    private static func keyWindow() -> UIWindow? {
+        for scene in UIApplication.shared.connectedScenes {
+            guard let windowScene = scene as? UIWindowScene else { continue }
+            if let key = windowScene.windows.first(where: { $0.isKeyWindow }) {
+                return key
+            }
+        }
+        // フォールバック: 最初のシーンの最初のウィンドウ
+        return UIApplication.shared.connectedScenes
+            .compactMap { $0 as? UIWindowScene }
+            .first?.windows.first
+    }
+}
+
 class BroadcastPickerPlatformView: NSObject, FlutterPlatformView {
 
     private let containerView: UIView

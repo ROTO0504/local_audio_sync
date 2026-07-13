@@ -62,22 +62,19 @@ class BroadcastSection extends StatelessWidget {
               ),
             ),
           AppSpacing.gapM,
-          Row(
-            mainAxisAlignment: MainAxisAlignment.center,
-            children: [
-              Icon(Icons.cell_tower, size: 28, color: theme.colorScheme.primary),
-              AppSpacing.gapS,
-              BroadcastPickerButton(
-                preferredExtensionBundleId: preferredExtensionId,
-                size: 60,
-              ),
-              AppSpacing.gapS,
-              Text(
-                'タップして配信開始',
-                style: TextStyle(fontSize: 13, color: subtle),
-              ),
-            ],
+          BroadcastPickerButton(
+            preferredExtensionBundleId: preferredExtensionId,
+            broadcasting: broadcastingActive,
           ),
+          if (!broadcastingActive) ...[
+            AppSpacing.gapS,
+            Text(
+              'ボタンを押すと配信先の選択シートが開きます。'
+              '「Local Audio Sync」を選んで「ブロードキャストを開始」してください。',
+              textAlign: TextAlign.center,
+              style: TextStyle(fontSize: 12, color: subtle),
+            ),
+          ],
           if (captureError != null) ...[
             AppSpacing.gapS,
             Text(

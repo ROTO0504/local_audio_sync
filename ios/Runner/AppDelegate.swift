@@ -33,6 +33,29 @@ import UIKit
       )
     }
 
+    // Broadcast Picker をプログラム起動するためのチャネル。
+    // UiKitView 埋め込みは iOS 18/26 でボタンが描画/反応しないため、
+    // 通常の Flutter ボタンからこのチャネル経由でシステム配信シートを開く。
+    if let pickerCtrlRegistrar = engineBridge.pluginRegistry.registrar(
+      forPlugin: "BroadcastPickerControl"
+    ) {
+      let channel = FlutterMethodChannel(
+        name: "com.example.local_audio_sync/broadcastControl",
+        binaryMessenger: pickerCtrlRegistrar.messenger()
+      )
+      let controller = BroadcastPickerController()
+      channel.setMethodCallHandler { call, result in
+        switch call.method {
+        case "presentBroadcastPicker":
+          let args = call.arguments as? [String: Any]
+          controller.present(preferredExtension: args?["preferredExtension"] as? String)
+          result(nil)
+        default:
+          result(FlutterMethodNotImplemented)
+        }
+      }
+    }
+
     // Hub(集約・再生)モード用: miniaudio ミキサーの出力を裏で維持するため、
     // AVAudioSession の activate / deactivate を Flutter から制御する。
     if let hubRegistrar = engineBridge.pluginRegistry.registrar(

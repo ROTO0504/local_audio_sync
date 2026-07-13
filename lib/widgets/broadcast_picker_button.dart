@@ -1,36 +1,50 @@
 import 'dart:io';
-import 'package:flutter/foundation.dart';
-import 'package:flutter/gestures.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 
-/// iOS の `RPSystemBroadcastPickerView` を埋め込むためのウィジェット。
+/// iOS の配信(Broadcast Upload Extension)を開始するためのボタン。
 ///
-/// iOS では Apple の制約により、ブロードキャスト(画面・音声配信)を
-/// プログラムから自動開始することはできない。ユーザーが必ずこのボタンを
-/// タップして、システムシートから配信先 Extension を選んで開始する必要がある。
+/// iOS では Apple の制約により、ブロードキャストをプログラムから完全自動で
+/// 開始することはできず、`RPSystemBroadcastPickerView` 由来のシステムシートを
+/// ユーザー操作で開く必要がある。
 ///
-/// このウィジェットは見た目をアプリのテーマに合わせて整えつつ、
-/// 内部に隠した `RPSystemBroadcastPickerView` の小さなボタンに対する
-/// クリックを伝搬させる仕組みを取る代わりに、`UiKitView` をそのまま
-/// 表示する。`preferredExtension` を指定すると iOS のシートで対象 Extension が
-/// 最上段に来るので、ユーザーはほぼ 1 タップで配信を始められる。
+/// 以前は `RPSystemBroadcastPickerView` を `UiKitView` として埋め込んでいたが、
+/// iOS 18/26 では内部の UIButton が描画されない・タップが伝搬しないことがあり、
+/// 「ボタンが押せない/テキストしか無い」状態になっていた。
 ///
-/// iOS 以外のプラットフォームでは何も表示しない(レイアウト潰さないために
-/// `SizedBox.shrink()` を返す)。
+/// そこで本ウィジェットは **通常の Flutter ボタン** として描画し、タップ時に
+/// MethodChannel 経由でネイティブ側([BroadcastPickerController])に配信シートを
+/// プログラム起動させる。描画とタップ判定は完全に Flutter 側で行うため確実に動く。
+///
+/// iOS 以外では何も表示しない(`SizedBox.shrink()`)。
 class BroadcastPickerButton extends StatelessWidget {
   /// `RPSystemBroadcastPickerView.preferredExtension` に渡すバンドル ID。
   /// 例: `com.roto0504.localAudioSync.BroadcastExtension`
   final String preferredExtensionBundleId;
 
-  /// ボタンの大きさ。`RPSystemBroadcastPickerView` 本体のサイズと一致させる。
-  final double size;
+  /// 現在ブロードキャスト中かどうか。ラベルの出し分けに使う。
+  final bool broadcasting;
 
   const BroadcastPickerButton({
     super.key,
     required this.preferredExtensionBundleId,
-    this.size = 56,
+    this.broadcasting = false,
   });
+
+  static const MethodChannel _channel =
+      MethodChannel('com.example.local_audio_sync/broadcastControl');
+
+  Future<void> _presentPicker() async {
+    if (!Platform.isIOS) return;
+    try {
+      await _channel.invokeMethod<void>('presentBroadcastPicker', {
+        'preferredExtension': preferredExtensionBundleId,
+      });
+    } on PlatformException {
+      // シートを開けなくても致命的ではないので握りつぶす。
+      // (再タップで再試行できる)
+    }
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -38,20 +52,15 @@ class BroadcastPickerButton extends StatelessWidget {
       return const SizedBox.shrink();
     }
 
-    return SizedBox(
-      width: size,
-      height: size,
-      child: UiKitView(
-        viewType: 'com.example.local_audio_sync/broadcastPicker',
-        creationParams: <String, Object?>{
-          'preferredExtension': preferredExtensionBundleId,
-        },
-        creationParamsCodec: const StandardMessageCodec(),
-        gestureRecognizers: <Factory<OneSequenceGestureRecognizer>>{
-          // 親の Scrollable などで握りつぶされないように
-          Factory<OneSequenceGestureRecognizer>(() => EagerGestureRecognizer()),
-        },
+    return FilledButton.icon(
+      icon: const Icon(Icons.cell_tower),
+      label: Text(
+        broadcasting ? 'ブロードキャストを管理' : 'タップして配信を開始',
       ),
+      style: FilledButton.styleFrom(
+        minimumSize: const Size.fromHeight(52),
+      ),
+      onPressed: _presentPicker,
     );
   }
 }
