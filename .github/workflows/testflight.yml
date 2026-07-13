@@ -124,14 +124,8 @@ jobs:
             -destination 'generic/platform=iOS' \
             -archivePath build/ios/Runner.xcarchive \
             archive \
-            -allowProvisioningUpdates \
-            -authenticationKeyPath "$HOME/private_keys/AuthKey_${{ secrets.ASC_KEY_ID }}.p8" \
-            -authenticationKeyID "${{ secrets.ASC_KEY_ID }}" \
-            -authenticationKeyIssuerID "${{ secrets.ASC_ISSUER_ID }}" \
             DEVELOPMENT_TEAM="${{ secrets.APPLE_TEAM_ID }}" \
-            CODE_SIGN_STYLE=Automatic \
-            PROVISIONING_PROFILE_SPECIFIER="" \
-            PROVISIONING_PROFILE=""
+            CODE_SIGN_STYLE=Automatic
 
       - name: Export and upload to TestFlight
         # 自動署名(ExportOptions)+ API キー認証。-allowProvisioningUpdates で
