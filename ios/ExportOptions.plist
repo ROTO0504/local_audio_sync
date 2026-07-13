@@ -22,7 +22,7 @@
 		<key>com.roto0504.localAudioSync</key>
 		<string>Local Audio Sync App Store</string>
 		<key>com.roto0504.localAudioSync.BroadcastExtension</key>
-		<string>LAS BroadcastExt AppStore</string>
+		<string>com.roto0504.localAudioSync.BroadcastExtension AppStore</string>
 	</dict>
 	<!-- ビルド番号は CI が --build-number で採番するため Xcode 側では管理しない -->
 	<key>manageAppVersionAndBuildNumber</key>

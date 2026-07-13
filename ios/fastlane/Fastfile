@@ -73,7 +73,8 @@ platform :ios do
 
     # 4) App Store 配布プロビジョニングプロファイルを作成し、ローカルへインストール
     # development / adhoc を指定しない = App Store 配布プロファイル(既定)。
-    # 両方 false を渡すと "conflict between options" になるため省略する。
+    # 既定の名前 "<bundleid> AppStore" で作成される。pbxproj / ExportOptions は
+    # この名前("com.roto0504.localAudioSync.BroadcastExtension AppStore")を参照する。
     sigh(
       app_identifier: ext_id,
       platform: "ios",

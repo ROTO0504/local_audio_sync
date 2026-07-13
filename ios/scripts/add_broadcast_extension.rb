@@ -140,7 +140,7 @@ def set_manual_appstore(target, profile_name)
   bs.delete('CODE_SIGN_IDENTITY[sdk=iphoneos*]')
 end
 set_manual_appstore(runner, 'Local Audio Sync App Store')
-set_manual_appstore(ext, 'LAS BroadcastExt AppStore')
+set_manual_appstore(ext, 'com.roto0504.localAudioSync.BroadcastExtension AppStore')
 
 project.save
 puts "[add_broadcast_extension] '#{EXT_NAME}' ターゲットを追加し Runner へ埋め込みました。"
