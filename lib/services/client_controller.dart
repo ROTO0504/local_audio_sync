@@ -409,6 +409,11 @@ class ClientController {
     if (active != _ref.read(clientStateProvider).broadcastingActive) {
       _clientState.setBroadcasting(active);
     }
+    // 診断テキスト(Extension の状態ファイル)も更新して UI に載せる。
+    final diag = await _capture.broadcastDiagnostics();
+    if (diag != _ref.read(clientStateProvider).broadcastDiagnostics) {
+      _clientState.setBroadcastDiagnostics(diag);
+    }
   }
 
   void _refreshLinkStats() {

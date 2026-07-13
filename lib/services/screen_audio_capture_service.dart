@@ -184,6 +184,18 @@ class ScreenAudioCaptureService {
     }
   }
 
+  /// iOS のみ: Broadcast Extension が App Group へ書き出した診断テキストを取得する。
+  /// 音声が Hub に届かないときの切り分け表示に使う(コンテナ取得可否・
+  /// .audioApp バッファ数・実サンプルレート・送信バイト数・errno など)。
+  Future<String?> broadcastDiagnostics() async {
+    if (!Platform.isIOS) return null;
+    try {
+      return await _methodChannel.invokeMethod<String>('broadcastDiagnostics');
+    } catch (_) {
+      return null;
+    }
+  }
+
   void dispose() {
     stop();
     _windowsLoopback?.dispose();

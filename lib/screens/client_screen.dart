@@ -126,6 +126,7 @@ class _ClientScreenState extends ConsumerState<ClientScreen> {
                         ? null
                         : '${controller.manualHub!.ip}:${controller.manualHub!.port}',
                     onStop: controller.disconnect,
+                    diagnostics: state.broadcastDiagnostics,
                   ),
                 ],
               ),

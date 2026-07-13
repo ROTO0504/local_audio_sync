@@ -45,6 +45,11 @@ class ClientState {
   /// リンク品質のスナップショット(未計測時は null)。
   final ClientLinkStats? linkStats;
 
+  /// iOS の Broadcast Extension が App Group へ書き出した診断テキスト
+  /// (コンテナ取得可否・.audioApp バッファ数・実サンプルレート・送信バイト等)。
+  /// 音声が届かないときの切り分け表示に使う。iOS 以外や未配信時は null。
+  final String? broadcastDiagnostics;
+
   const ClientState({
     this.status = ClientConnectionStatus.searching,
     this.hubIp,
@@ -61,6 +66,7 @@ class ClientState {
     this.connectedHubId,
     this.isManualMode = false,
     this.linkStats,
+    this.broadcastDiagnostics,
   });
 
   ClientState copyWith({
@@ -79,6 +85,7 @@ class ClientState {
     Object? connectedHubId = _unset,
     bool? isManualMode,
     Object? linkStats = _unset,
+    Object? broadcastDiagnostics = _unset,
   }) {
     return ClientState(
       status: status ?? this.status,
@@ -102,6 +109,9 @@ class ClientState {
       isManualMode: isManualMode ?? this.isManualMode,
       linkStats:
           linkStats == _unset ? this.linkStats : linkStats as ClientLinkStats?,
+      broadcastDiagnostics: broadcastDiagnostics == _unset
+          ? this.broadcastDiagnostics
+          : broadcastDiagnostics as String?,
     );
   }
 }
@@ -181,6 +191,10 @@ class ClientStateNotifier extends Notifier<ClientState> {
 
   void setLinkStats(ClientLinkStats? stats) {
     state = state.copyWith(linkStats: stats);
+  }
+
+  void setBroadcastDiagnostics(String? diagnostics) {
+    state = state.copyWith(broadcastDiagnostics: diagnostics);
   }
 }
 

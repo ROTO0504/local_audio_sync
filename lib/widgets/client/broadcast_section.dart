@@ -20,6 +20,9 @@ class BroadcastSection extends StatelessWidget {
   final String? manualTarget;
   final VoidCallback onStop;
 
+  /// iOS の Broadcast Extension 診断テキスト(無ければ null)。
+  final String? diagnostics;
+
   const BroadcastSection({
     super.key,
     required this.isIOS,
@@ -30,6 +33,7 @@ class BroadcastSection extends StatelessWidget {
     required this.preferredExtensionId,
     required this.manualTarget,
     required this.onStop,
+    this.diagnostics,
   });
 
   String get _searchingLabel => manualTarget == null
@@ -87,6 +91,10 @@ class BroadcastSection extends StatelessWidget {
             AppSpacing.gapM,
             _StopButton(onStop: onStop),
           ],
+          if (diagnostics != null) ...[
+            AppSpacing.gapM,
+            _DiagnosticsBox(text: diagnostics!),
+          ],
         ],
       );
     }
@@ -119,6 +127,47 @@ class BroadcastSection extends StatelessWidget {
           _StopButton(onStop: onStop),
         ],
       ],
+    );
+  }
+}
+
+/// Broadcast Extension の診断テキストを等幅で小さく表示する箱。
+/// 音声が届かないときの原因切り分け(Extension 起動/音声到達/送信状況)用。
+class _DiagnosticsBox extends StatelessWidget {
+  final String text;
+  const _DiagnosticsBox({required this.text});
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    return Container(
+      width: double.infinity,
+      padding: const EdgeInsets.all(10),
+      decoration: BoxDecoration(
+        color: theme.colorScheme.surfaceContainerHighest,
+        borderRadius: BorderRadius.circular(8),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Text(
+            '配信診断',
+            style: theme.textTheme.labelSmall?.copyWith(
+              color: theme.colorScheme.onSurfaceVariant,
+            ),
+          ),
+          const SizedBox(height: 4),
+          Text(
+            text,
+            style: TextStyle(
+              fontFamily: 'monospace',
+              fontSize: 11,
+              height: 1.4,
+              color: theme.colorScheme.onSurface,
+            ),
+          ),
+        ],
+      ),
     );
   }
 }

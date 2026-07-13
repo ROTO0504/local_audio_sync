@@ -71,9 +71,30 @@ import Darwin
             result(active)
         case "appGroupId":
             result(appGroupId)
+        case "broadcastDiagnostics":
+            result(readDiagnostics())
         default:
             result(FlutterMethodNotImplemented)
         }
+    }
+
+    /// Extension が App Group へ書き出した診断テキストを読む(無ければ nil)。
+    /// 受信側(このプラグイン)が今 UDS を bind できているかも併記して、
+    /// 送信(Extension)/受信(アプリ)どちら側で切れているかを判別しやすくする。
+    private func readDiagnostics() -> String? {
+        guard let containerUrl = FileManager.default
+            .containerURL(forSecurityApplicationGroupIdentifier: appGroupId) else {
+            return "app: App Group コンテナ取得不可(受信側)"
+        }
+        let now = monotonicNow()
+        let recvLine = "app_recv=\(recvRunning ? "listening" : "stopped")"
+            + " app_sinceData=\(String(format: "%.1f", now - lastPacketTime))s"
+        let statusUrl = containerUrl.appendingPathComponent("broadcast_status.txt")
+        guard let data = try? Data(contentsOf: statusUrl),
+              let text = String(data: data, encoding: .utf8) else {
+            return "ext: 状態ファイル無し(Extension 未起動 or 書込前)\n" + recvLine
+        }
+        return text + "\n" + recvLine
     }
 
     // MARK: - FlutterStreamHandler
