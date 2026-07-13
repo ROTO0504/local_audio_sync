@@ -10,15 +10,19 @@ import '../vu_meter.dart';
 import 'diagnostics_chip.dart';
 
 /// デスクトップ Hub テーブルの列幅定義。ヘッダと行で共有する。
+///
+/// 固定列の合計は名前(Expanded)を除いて狭めに取り、中ペインが 600px 程度でも
+/// オーバーフローしないようにしている(以前は合計 668px で 667px ペインに
+/// 収まらず RenderFlex overflow が出ていた)。
 class ClientRowLayout {
   static const double checkbox = 44;
-  static const double platform = 40;
-  static const double ip = 130;
-  static const double vu = 28;
-  static const double volume = 120;
-  static const double volumeLabel = 48;
-  static const double actions = 200;
-  static const double diagnostics = 70;
+  static const double platform = 36;
+  static const double ip = 108;
+  static const double vu = 8;
+  static const double volume = 96;
+  static const double volumeLabel = 44;
+  static const double actions = 152;
+  static const double diagnostics = 60;
 }
 
 /// テーブルのヘッダ行(全選択チェックボックス + 列見出し)。
@@ -218,10 +222,14 @@ class ClientRow extends ConsumerWidget {
                     ),
                   ),
                 ),
-                // VU メーター
-                VuMeter(
-                  level: active ? client.vuLevel : 0.0,
-                  height: 28,
+                // VU メーター(ヘッダの vu 列幅と揃える)
+                SizedBox(
+                  width: ClientRowLayout.vu,
+                  child: VuMeter(
+                    level: active ? client.vuLevel : 0.0,
+                    width: ClientRowLayout.vu,
+                    height: 28,
+                  ),
                 ),
                 const SizedBox(width: AppSpacing.s),
                 // 音量スライダ

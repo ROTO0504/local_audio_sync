@@ -90,6 +90,10 @@ class _LocalAudioSyncAppState extends ConsumerState<LocalAudioSyncApp> {
 
   @override
   Widget build(BuildContext context) {
+    // 役割(appMode)が変わったら go_router の redirect を再評価させる。
+    // 設定画面からの「役割を切り替える」で mode を null に reset した際、これが
+    // ないと redirect が発火せず /setup(役割選択)へ戻れない。
+    ref.listen<AppMode?>(appModeProvider, (_, _) => _router.refresh());
     final themeMode = ref.watch(themeModeProvider);
     return MaterialApp.router(
       title: 'Local Audio Sync',

@@ -11,6 +11,10 @@ import '../../widgets/hub/diagnostics_chip.dart';
 import '../../widgets/hub/hub_dashboard.dart';
 import '../../widgets/vu_meter.dart';
 
+/// テーブルが必要とする最小幅(列幅合計 + 名前列の最小幅 + 左右パディング)。
+/// 中ペインがこれより狭いときは横スクロールさせ、オーバーフローを防ぐ。
+const double _kMinTableWidth = 712;
+
 /// 広幅(デスクトップ)向けの Hub 表示。
 ///
 /// 3ペイン構成:
@@ -46,33 +50,57 @@ class _HubDesktopViewState extends ConsumerState<HubDesktopView> {
           child: HubDashboard(),
         ),
         VerticalDivider(width: 1, color: scheme.outlineVariant),
-        // 中: ツールバー + テーブル
+        // 中: ツールバー(固定) + テーブル(必要なら横スクロール)
         Expanded(
           child: Column(
             children: [
               const ClientToolbar(),
-              ClientRowHeader(
-                visibleIds: [for (final c in visible) c.id],
-              ),
+              // ヘッダと行は同じ幅で横スクロールさせて列を揃える。中ペインが
+              // 狭い(ウィンドウ幅が小さい / 右詳細ペインが開いている)ときでも
+              // RenderFlex overflow せずスクロールで全列にアクセスできる。
               Expanded(
-                child: all.isEmpty
-                    ? const _EmptyState()
-                    : visible.isEmpty
-                        ? const _NoMatchState()
-                        : ListView.builder(
-                            itemCount: visible.length,
-                            itemBuilder: (context, i) {
-                              final c = visible[i];
-                              return ClientRow(
-                                client: c,
-                                highlighted: c.id == _detailUuid,
-                                onTap: () => setState(
-                                  () => _detailUuid =
-                                      c.id == _detailUuid ? null : c.id,
-                                ),
-                              );
-                            },
-                          ),
+                child: LayoutBuilder(
+                  builder: (context, constraints) {
+                    final tableWidth = constraints.maxWidth > _kMinTableWidth
+                        ? constraints.maxWidth
+                        : _kMinTableWidth;
+                    return SingleChildScrollView(
+                      scrollDirection: Axis.horizontal,
+                      child: SizedBox(
+                        width: tableWidth,
+                        child: Column(
+                          children: [
+                            ClientRowHeader(
+                              visibleIds: [for (final c in visible) c.id],
+                            ),
+                            Expanded(
+                              child: all.isEmpty
+                                  ? const _EmptyState()
+                                  : visible.isEmpty
+                                      ? const _NoMatchState()
+                                      : ListView.builder(
+                                          itemCount: visible.length,
+                                          itemBuilder: (context, i) {
+                                            final c = visible[i];
+                                            return ClientRow(
+                                              client: c,
+                                              highlighted: c.id == _detailUuid,
+                                              onTap: () => setState(
+                                                () => _detailUuid =
+                                                    c.id == _detailUuid
+                                                        ? null
+                                                        : c.id,
+                                              ),
+                                            );
+                                          },
+                                        ),
+                            ),
+                          ],
+                        ),
+                      ),
+                    );
+                  },
+                ),
               ),
             ],
           ),

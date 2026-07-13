@@ -214,7 +214,11 @@ class _HubSettingsScreenState extends ConsumerState<HubSettingsScreen> {
             title: const Text('クライアントモードへ切替'),
             subtitle: const Text('現在の Hub を終了して役割を選び直します'),
             onTap: () async {
+              // Hub を停止してから役割を reset。reset で router が refresh され
+              // redirect が /setup(役割選択)へ誘導する。設定画面は閉じておく。
+              await ref.read(hubControllerProvider).stop();
               await ref.read(appModeProvider.notifier).reset();
+              if (context.mounted) Navigator.of(context).pop();
             },
           ),
         ],
