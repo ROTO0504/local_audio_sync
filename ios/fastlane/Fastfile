@@ -1,0 +1,47 @@
+default_platform(:ios)
+
+# Broadcast Extension の署名資産(App ID + App Groups + App Store プロファイル)を
+# App Store Connect API 経由で事前に作成・インストールするための lane。
+#
+# 背景: xcodebuild の archive + -allowProvisioningUpdates は Extension の新規
+# App ID 作成時に "Authentication failed: bearer token" で失敗する(API キーは
+# App Manager でアップロードには使えるのに、xcodebuild 内部の自動プロビジョニング
+# 認証だけ通らない)。fastlane は同じ API キーで App Store Connect API を直接叩く
+# ため、ここでプロファイルまで作ってインストールしておけば、archive の自動署名は
+# 「既存プロファイルを使う」だけになり作成が走らず失敗を回避できる。
+
+platform :ios do
+  desc "Register Broadcast Extension App ID (+App Group) and create/install its App Store profile"
+  lane :provision_extension do
+    api_key = app_store_connect_api_key(
+      key_id: ENV["ASC_KEY_ID"],
+      issuer_id: ENV["ASC_ISSUER_ID"],
+      key_filepath: ENV["ASC_KEY_PATH"]
+    )
+
+    ext_id = "com.roto0504.localAudioSync.BroadcastExtension"
+
+    # 1) Developer portal に Extension の識別子を登録し、App Groups を有効化する。
+    #    skip_itc: true で App Store Connect の「アプリ」は作らず、識別子だけ登録。
+    produce(
+      app_identifier: ext_id,
+      app_name: "Local Audio Sync Broadcast Ext",
+      skip_itc: true,
+      enable_services: {
+        app_group: "on"
+      },
+      api_key: api_key
+    )
+
+    # 2) App Store 配布プロビジョニングプロファイルを作成し、ローカルへインストール。
+    #    force: true で内容が古ければ作り直す。development/adhoc: false = App Store。
+    sigh(
+      app_identifier: ext_id,
+      platform: "ios",
+      development: false,
+      adhoc: false,
+      force: true,
+      api_key: api_key
+    )
+  end
+end

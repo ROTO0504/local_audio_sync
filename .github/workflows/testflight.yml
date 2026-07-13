@@ -100,6 +100,17 @@ jobs:
         working-directory: ios
         run: pod install
 
+      - name: Provision Broadcast Extension (fastlane)
+        # Extension の App ID + App Groups + App Store プロファイルを API キーで
+        # 事前作成・インストールする。これで後段 archive の自動署名は「作成」せず
+        # 既存を使うだけになり "bearer token" 失敗を回避する。
+        working-directory: ios
+        env:
+          ASC_KEY_ID: ${{ secrets.ASC_KEY_ID }}
+          ASC_ISSUER_ID: ${{ secrets.ASC_ISSUER_ID }}
+          ASC_KEY_PATH: /Users/runner/private_keys/AuthKey_${{ secrets.ASC_KEY_ID }}.p8
+        run: fastlane provision_extension
+
       - name: Archive (automatic signing)
         # Runner と BroadcastExtension の2ターゲットを自動署名する。API キー +
         # -allowProvisioningUpdates で不足プロファイル(Extension 用など)を
