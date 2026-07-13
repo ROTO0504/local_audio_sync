@@ -25,15 +25,14 @@ SWIFT        = '5.0'
 
 project = Xcodeproj::Project.open(PROJECT_PATH)
 
-# --- 冪等性: 既に存在するなら何もしない -----------------------------------
-if project.targets.any? { |t| t.name == EXT_NAME }
-  puts "[add_broadcast_extension] '#{EXT_NAME}' ターゲットは既に存在します。スキップ。"
-  exit 0
-end
-
 runner = project.targets.find { |t| t.name == 'Runner' }
 raise "Runner ターゲットが見つかりません" if runner.nil?
 
+# 冪等性: ターゲット作成は無ければ行う。署名設定は毎回適用する(末尾)。
+ext = project.targets.find { |t| t.name == EXT_NAME }
+if ext
+  puts "[add_broadcast_extension] '#{EXT_NAME}' は既存。ターゲット作成はスキップ。"
+else
 # --- Extension ターゲットを作成(app_extension / iOS / Swift) ---------------
 ext = project.new_target(:app_extension, EXT_NAME, :ios, DEPLOY, nil, :swift)
 
@@ -125,6 +124,23 @@ unless embed
 end
 build_file = embed.add_file_reference(ext.product_reference, true)
 build_file.settings = { 'ATTRIBUTES' => ['RemoveHeadersOnCopy', 'CodeSignOnCopy'] }
+end
+
+# --- Runner / Extension の Release を手動 App Store 署名に設定(毎回)---------
+# 自動署名は archive で「開発用」プロファイルを探して失敗するため、既存の
+# App Store 配布プロファイルを手動指定する。Runner は "Local Audio Sync App
+# Store"(CI で install 済み)、Extension は fastlane sigh が作る名前を使う。
+def set_manual_appstore(target, profile_name)
+  rel = target.build_configurations.find { |c| c.name == 'Release' }
+  return if rel.nil?
+  bs = rel.build_settings
+  bs['CODE_SIGN_STYLE'] = 'Manual'
+  bs['CODE_SIGN_IDENTITY'] = 'Apple Distribution'
+  bs['PROVISIONING_PROFILE_SPECIFIER'] = profile_name
+  bs.delete('CODE_SIGN_IDENTITY[sdk=iphoneos*]')
+end
+set_manual_appstore(runner, 'Local Audio Sync App Store')
+set_manual_appstore(ext, 'LAS BroadcastExt AppStore')
 
 project.save
 puts "[add_broadcast_extension] '#{EXT_NAME}' ターゲットを追加し Runner へ埋め込みました。"
