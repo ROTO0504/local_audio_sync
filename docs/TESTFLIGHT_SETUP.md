@@ -105,7 +105,7 @@ CI がビルドする IPA には含まれていません。つまり:
 - **Extension なしの TestFlight ビルド** → Hub(集約・再生)としては完全動作。
   クライアント(送信)は接続はできるが「配信開始」ができない
 - **クライアント配信も TestFlight で試したい場合** → Mac で 1 回だけ
-  [docs/iOS_BROADCAST_SETUP.md](iOS_BROADCAST_SETUP.md) の手順で
+  [docs/ios/setup-xcode.md](ios/setup-xcode.md) の手順で
   Extension ターゲットを追加し、`ios/Runner.xcodeproj` の変更を**コミット**する。
   以後は同じワークフローで Extension も署名・同梱される
   - ターゲット追加時の Bundle ID: `com.roto0504.localAudioSync.BroadcastExtension`

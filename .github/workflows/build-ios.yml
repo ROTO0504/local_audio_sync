@@ -19,7 +19,7 @@ env:
 # Broadcast Upload Extension(ios/BroadcastExtension/)は Xcode 上で
 # 別ターゲットとして手動追加する前提のため、CI のデフォルトビルドには
 # 含まれません(pbxproj に登録されていないため)。
-# 詳細は docs/iOS_BROADCAST_SETUP.md を参照してください。
+# 詳細は docs/ios/README.md を参照してください。
 # 実機テストは AltStore / Sideloadly / Mac + USB のいずれかで行ってください。
 jobs:
   build-ios:

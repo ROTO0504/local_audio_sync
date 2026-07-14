@@ -17,7 +17,7 @@ import 'client_settings_screen.dart';
 
 /// Broadcast Upload Extension のバンドル ID。
 /// Xcode でターゲットを作成するとき同じ値を Bundle Identifier に設定すること。
-/// docs/iOS_BROADCAST_SETUP.md 参照。
+/// docs/ios/README.md 参照。
 const _broadcastExtensionBundleId =
     'com.roto0504.localAudioSync.BroadcastExtension';
 

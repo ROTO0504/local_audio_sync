@@ -122,7 +122,7 @@ cd ..
 
 iOS の **Broadcast Upload Extension**(他アプリの音をキャプチャする別プロセス)は、Flutter からは自動生成できず Xcode 上で手動追加が必要です。詳細手順:
 
-→ **[docs/iOS_BROADCAST_SETUP.md](../docs/iOS_BROADCAST_SETUP.md)**
+→ **[docs/ios/setup-xcode.md](../docs/ios/setup-xcode.md)**
 
 ざっくり流れ:
 
@@ -134,7 +134,7 @@ Xcode で:
 
 1. **Runner ターゲット → Signing & Capabilities** で自分の Apple ID(Team)を選ぶ。Bundle ID は `com.roto0504.localAudioSync` のままで実機テストは可能。
 2. **「+ Capability」→ App Groups** を追加し、`group.com.roto0504.localAudioSync` を有効化。
-3. **「+」ボタン → Broadcast Upload Extension** ターゲットを追加(`docs/iOS_BROADCAST_SETUP.md` の §2〜5 通り)。
+3. **「+」ボタン → Broadcast Upload Extension** ターゲットを追加(`docs/ios/setup-xcode.md` の §2〜5 通り)。
 4. Extension ターゲットにも同じ App Group を有効化。
 
 > **既に pbxproj 整備済みの新規 Swift ファイル**(`AudioSessionManager.swift` / `BroadcastReceiverPlugin.swift` / `BroadcastPickerView.swift`)は Runner ターゲットに登録済みなので、ユーザーが Xcode で追加する必要はありません。
@@ -259,7 +259,7 @@ cd ios && pod install
 ### `App Group コンテナが取得できません` エラー(iOS 実機)
 
 - Runner と BroadcastExtension の両ターゲットで App Group が一致しているか確認
-- 詳細: [docs/iOS_BROADCAST_SETUP.md のトラブルシューティング](../docs/iOS_BROADCAST_SETUP.md#トラブルシューティング)
+- 詳細: [docs/ios/setup-xcode.md のトラブルシューティング](../docs/ios/setup-xcode.md#トラブルシューティング)
 
 ### macOS で `ScreenCaptureKit が見つからない` ビルドエラー
 
@@ -290,6 +290,6 @@ cd ios && pod install
 
 - [README.md](../README.md) — プロジェクト全体の概要
 - [docs/PLAN.md](../docs/PLAN.md) — アーキテクチャ判断の背景
-- [docs/iOS_BROADCAST_SETUP.md](../docs/iOS_BROADCAST_SETUP.md) — Broadcast Upload Extension の Xcode 手順
+- [docs/ios/setup-xcode.md](../docs/ios/setup-xcode.md) — Broadcast Upload Extension の Xcode 手順
 - [Flutter 公式: macOS install](https://docs.flutter.dev/get-started/install/macos)
 - [Flutter 公式: iOS deployment](https://docs.flutter.dev/deployment/ios)

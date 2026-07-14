@@ -136,7 +136,7 @@ flutter pub get
 
 iOS / iPadOS で他アプリの音を取るには、Xcode 上で **Broadcast Upload Extension ターゲット** を手動で追加する必要があります(Hub として使うだけなら不要)。詳細手順:
 
-→ [docs/iOS_BROADCAST_SETUP.md](docs/iOS_BROADCAST_SETUP.md)
+→ [docs/ios/setup-xcode.md](docs/ios/setup-xcode.md)
 
 ### 4. macOS の追加セットアップ
 
@@ -328,7 +328,7 @@ LAHUB:{hubIPv4}:7777:{hubName}              ← v1(旧クライアント互換)
 local-audio-sync/
 ├── docs/
 │   ├── PLAN.md                       # リアーキテクチャ計画(v1、実装済み)
-│   └── iOS_BROADCAST_SETUP.md        # iOS Extension の Xcode セットアップ手順
+│   └── ios/setup-xcode.md        # iOS Extension の Xcode セットアップ手順
 ├── plan/
 │   ├── 2026-07-12.md                 # 機能拡張計画 v2(ユニバーサル Hub + リモート制御)
 │   └── MAC_VSCODE_BUILD.md           # Mac での開発環境セットアップ
@@ -532,7 +532,7 @@ fix/*      ← バグ修正
 - App Group の設定がメインアプリと Extension で一致しているか確認(`group.com.roto0504.localAudioSync`)
 - 一度アプリを完全にアンインストールしてから再インストール
 - DRM 保護コンテンツ(Apple Music / Netflix 等)は仕様上取得できません
-- 詳細は [docs/iOS_BROADCAST_SETUP.md のトラブルシューティング](docs/iOS_BROADCAST_SETUP.md#トラブルシューティング)参照
+- 詳細は [docs/ios/setup-xcode.md のトラブルシューティング](docs/ios/setup-xcode.md#トラブルシューティング)参照
 
 ### macOS で音が取れない
 
