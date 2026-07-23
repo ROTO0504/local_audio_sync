@@ -46,3 +46,7 @@ app.*.map.json
 
 # FFI plugin NDK build intermediates
 packages/audio_mixer_ffi/android/.cxx/
+
+# Gradle build artifacts
+.gradle/
+**/android/build/
